@@ -12,7 +12,10 @@ class Settings(BaseSettings):
 
     app_name: str = "Universal AI Knowledge Graph"
     environment: str = Field(default="development")
-    api_key: str | None = Field(default=None, description="Optional static API key for private deployments")
+    api_key: str | None = Field(
+        default=None,
+        description="Optional static API key for private deployments",
+    )
     storage_backend: Literal["memory", "postgres"] = "memory"
     database_url: str = "postgresql+psycopg://ukg:ukg@localhost:5432/ukg"
     embedding_provider: str = "local-hash"
