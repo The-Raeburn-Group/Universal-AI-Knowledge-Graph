@@ -15,9 +15,18 @@ class JsonFileConnector(Connector):
         if isinstance(records, dict):
             records = [records]
         for index, record in enumerate(records):
-            title = str(record.get("title") or record.get("name") or f"JSON record {index + 1}")
+            title = str(
+                record.get("title") or record.get("name") or f"JSON record {index + 1}"
+            )
             body = json.dumps(record, ensure_ascii=False, indent=2)
-            yield DocumentIn(workspace_id=self.config.workspace_id, source="json", external_id=str(record.get("id", index)), title=title, body=body, metadata={"path": str(path)})
+            yield DocumentIn(
+                workspace_id=self.config.workspace_id,
+                source="json",
+                external_id=str(record.get("id", index)),
+                title=title,
+                body=body,
+                metadata={"path": str(path)},
+            )
 
 
 registry.register("json", JsonFileConnector)
