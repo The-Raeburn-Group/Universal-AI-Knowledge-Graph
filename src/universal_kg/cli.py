@@ -14,7 +14,11 @@ app = typer.Typer(help="Universal AI Knowledge Graph command line tools.")
 @app.command()
 def ingest_file(workspace_id: str, connector: str, file_path: str) -> None:
     async def run_job() -> None:
-        cfg = ConnectorConfig(workspace_id=workspace_id, source_name=connector, options={"path": file_path})
+        cfg = ConnectorConfig(
+            workspace_id=workspace_id,
+            source_name=connector,
+            options={"path": file_path},
+        )
         instance = registry.create(connector, cfg)
         service = IngestionService()
         count = 0
