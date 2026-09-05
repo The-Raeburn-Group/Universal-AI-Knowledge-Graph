@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from universal_kg.domain import SearchRequest, SearchResponse
+from universal_kg.domain import Entity, Relationship, SearchRequest, SearchResponse
 from universal_kg.processing.embeddings import EmbeddingProvider, get_embedding_provider
 from universal_kg.storage.base import KnowledgeStore
 from universal_kg.storage.factory import get_knowledge_store
@@ -18,8 +18,8 @@ class SearchService:
     async def search(self, request: SearchRequest) -> SearchResponse:
         vector = (await self.embedding_provider.embed([request.query]))[0]
         hits = await self.knowledge_store.search(request.workspace_id, vector, request.limit)
-        entities = []
-        relationships = []
+        entities: list[Entity] = []
+        relationships: list[Relationship] = []
         if request.include_graph:
             entities, relationships = await self.knowledge_store.graph_context(
                 request.workspace_id, request.query
