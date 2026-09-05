@@ -12,6 +12,8 @@ RUN apt-get update \
 
 COPY pyproject.toml README.md ./
 COPY src ./src
+COPY alembic.ini ./alembic.ini
+COPY migrations ./migrations
 
 RUN pip install --upgrade pip \
     && pip install .
