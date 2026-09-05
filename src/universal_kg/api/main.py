@@ -13,6 +13,7 @@ from universal_kg.logging import configure_logging, get_logger
 from universal_kg.security import audit_event, client_key, rate_limiter
 from universal_kg.services.ingestion import IngestionService
 from universal_kg.services.search import SearchService
+from universal_kg.storage.factory import get_knowledge_store
 
 settings = get_settings()
 configure_logging(settings.log_level)
@@ -67,11 +68,23 @@ async def security_middleware(
 
 @app.get("/health")
 async def health(app_settings: Settings = Depends(get_settings)) -> dict[str, str]:
-    return {"status": "ok", "service": app_settings.app_name, "environment": app_settings.environment}
+    return {
+        "status": "ok",
+        "service": app_settings.app_name,
+        "environment": app_settings.environment,
+    }
 
 
 @app.get("/ready")
 async def ready() -> dict[str, str]:
+    try:
+        await get_knowledge_store().check_ready()
+    except Exception as exc:
+        logger.warning("knowledge_store_not_ready", error=str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Knowledge store is not ready",
+        ) from exc
     return {"status": "ready"}
 
 
@@ -82,11 +95,19 @@ async def metrics() -> dict[str, int]:
 
 @app.post("/v1/ingest", response_model=Document, dependencies=[Depends(require_api_key)])
 async def ingest(payload: DocumentIn) -> Document:
-    audit_event("document.ingest", workspace_id=payload.workspace_id, metadata={"source": str(payload.source)})
+    audit_event(
+        "document.ingest",
+        workspace_id=payload.workspace_id,
+        metadata={"source": str(payload.source)},
+    )
     return await IngestionService().ingest(payload)
 
 
 @app.post("/v1/search", response_model=SearchResponse, dependencies=[Depends(require_api_key)])
 async def search(payload: SearchRequest) -> SearchResponse:
-    audit_event("search.query", workspace_id=payload.workspace_id, metadata={"limit": payload.limit})
+    audit_event(
+        "search.query",
+        workspace_id=payload.workspace_id,
+        metadata={"limit": payload.limit},
+    )
     return await SearchService().search(payload)
