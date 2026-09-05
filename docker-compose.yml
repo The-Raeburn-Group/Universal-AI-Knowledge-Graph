@@ -1,11 +1,27 @@
 services:
+  migrate:
+    build: .
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      UKG_STORAGE_BACKEND: postgres
+      UKG_DATABASE_URL: postgresql+psycopg://ukg:ukg@postgres:5432/ukg
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
   api:
     build: .
     ports:
       - "8000:8000"
     env_file:
       - .env
+    environment:
+      UKG_STORAGE_BACKEND: postgres
+      UKG_DATABASE_URL: postgresql+psycopg://ukg:ukg@postgres:5432/ukg
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
     restart: unless-stopped
