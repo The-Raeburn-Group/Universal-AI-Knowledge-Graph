@@ -34,7 +34,9 @@ class MemoryKnowledgeStore:
         self.entities.extend(entities)
         self.relationships.extend(relationships)
 
-    async def search(self, workspace_id: str, query_vector: list[float], limit: int) -> list[SearchHit]:
+    async def search(
+        self, workspace_id: str, query_vector: list[float], limit: int
+    ) -> list[SearchHit]:
         scored: list[tuple[float, Chunk]] = []
         for chunk_id, chunk in self.chunks.items():
             if chunk.workspace_id != workspace_id:
@@ -44,15 +46,43 @@ class MemoryKnowledgeStore:
         hits: list[SearchHit] = []
         for score, chunk in scored[:limit]:
             document = self.documents[chunk.document_id]
-            hits.append(SearchHit(document_id=document.id, chunk_id=chunk.id, title=document.title, text=chunk.text, score=score, source=document.source, metadata=document.metadata | chunk.metadata))
+            hits.append(
+                SearchHit(
+                    document_id=document.id,
+                    chunk_id=chunk.id,
+                    title=document.title,
+                    text=chunk.text,
+                    score=score,
+                    source=document.source,
+                    metadata=document.metadata | chunk.metadata,
+                )
+            )
         return hits
 
-    async def graph_context(self, workspace_id: str, query: str) -> tuple[list[Entity], list[Relationship]]:
+    async def graph_context(
+        self, workspace_id: str, query: str
+    ) -> tuple[list[Entity], list[Relationship]]:
         tokens = {token.lower() for token in query.split() if len(token) > 2}
-        entities = [entity for entity in self.entities if entity.workspace_id == workspace_id and any(token in entity.name.lower() for token in tokens)][:20]
+        entities = [
+            entity
+            for entity in self.entities
+            if entity.workspace_id == workspace_id
+            and any(token in entity.name.lower() for token in tokens)
+        ][:20]
         names = {entity.name for entity in entities}
-        relationships = [rel for rel in self.relationships if rel.workspace_id == workspace_id and (rel.subject in names or rel.object in names)][:50]
+        relationships = [
+            rel
+            for rel in self.relationships
+            if rel.workspace_id == workspace_id
+            and (rel.subject in names or rel.object in names)
+        ][:50]
         return entities, relationships
+
+    async def check_ready(self) -> None:
+        return None
+
+    async def close(self) -> None:
+        return None
 
 
 store = MemoryKnowledgeStore()
