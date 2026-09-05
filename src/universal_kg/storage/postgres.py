@@ -4,7 +4,18 @@ from datetime import datetime
 from typing import Any
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, String, Text, or_, select, text
+from sqlalchemy import (
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    or_,
+    select,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB, insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -40,14 +51,18 @@ class ChunkRecord(Base):
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)
     document_id: Mapped[str] = mapped_column(
-        Text, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True
+        Text,
+        ForeignKey("documents.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
     workspace_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     text: Mapped[str] = mapped_column(Text, nullable=False)
     ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
     metadata_json: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, nullable=False)
     embedding: Mapped[list[float]] = mapped_column(
-        Vector(DATABASE_EMBEDDING_DIMENSIONS), nullable=False
+        Vector(DATABASE_EMBEDDING_DIMENSIONS),
+        nullable=False,
     )
 
     __table_args__ = (
@@ -76,7 +91,8 @@ class RelationshipRecord(Base):
     predicate: Mapped[str] = mapped_column(String(256), nullable=False)
     object_name: Mapped[str] = mapped_column("object", String(512), nullable=False)
     evidence_chunk_id: Mapped[str | None] = mapped_column(
-        Text, ForeignKey("chunks.id", ondelete="SET NULL")
+        Text,
+        ForeignKey("chunks.id", ondelete="SET NULL"),
     )
     confidence: Mapped[float] = mapped_column(Float, nullable=False)
     metadata_json: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, nullable=False)
@@ -99,7 +115,8 @@ class PostgresKnowledgeStore:
         self._sessions = async_sessionmaker(self._engine, expire_on_commit=False)
 
     async def upsert_document(self, document: Document) -> None:
-        statement = pg_insert(DocumentRecord).values(
+        table = DocumentRecord.__table__
+        statement = pg_insert(table).values(
             id=document.id,
             workspace_id=document.workspace_id,
             source=document.source,
@@ -110,7 +127,7 @@ class PostgresKnowledgeStore:
             created_at=document.created_at,
         )
         statement = statement.on_conflict_do_update(
-            index_elements=[DocumentRecord.id],
+            index_elements=[table.c.id],
             set_={
                 "workspace_id": statement.excluded.workspace_id,
                 "source": statement.excluded.source,
@@ -148,9 +165,10 @@ class PostgresKnowledgeStore:
             }
             for chunk, vector in zip(chunks, vectors, strict=True)
         ]
-        statement = pg_insert(ChunkRecord).values(values)
+        table = ChunkRecord.__table__
+        statement = pg_insert(table).values(values)
         statement = statement.on_conflict_do_update(
-            index_elements=[ChunkRecord.id],
+            index_elements=[table.c.id],
             set_={
                 "document_id": statement.excluded.document_id,
                 "workspace_id": statement.excluded.workspace_id,
@@ -165,7 +183,9 @@ class PostgresKnowledgeStore:
             await session.commit()
 
     async def upsert_graph(
-        self, entities: list[Entity], relationships: list[Relationship]
+        self,
+        entities: list[Entity],
+        relationships: list[Relationship],
     ) -> None:
         async with self._sessions() as session:
             if entities:
@@ -179,9 +199,10 @@ class PostgresKnowledgeStore:
                     }
                     for entity in entities
                 ]
-                entity_statement = pg_insert(EntityRecord).values(entity_values)
+                table = EntityRecord.__table__
+                entity_statement = pg_insert(table).values(entity_values)
                 entity_statement = entity_statement.on_conflict_do_update(
-                    index_elements=[EntityRecord.id],
+                    index_elements=[table.c.id],
                     set_={
                         "workspace_id": entity_statement.excluded.workspace_id,
                         "name": entity_statement.excluded.name,
@@ -205,9 +226,10 @@ class PostgresKnowledgeStore:
                     }
                     for relationship in relationships
                 ]
-                relationship_statement = pg_insert(RelationshipRecord).values(relationship_values)
+                table = RelationshipRecord.__table__
+                relationship_statement = pg_insert(table).values(relationship_values)
                 relationship_statement = relationship_statement.on_conflict_do_update(
-                    index_elements=[RelationshipRecord.id],
+                    index_elements=[table.c.id],
                     set_={
                         "workspace_id": relationship_statement.excluded.workspace_id,
                         "subject": relationship_statement.excluded.subject,
@@ -223,7 +245,10 @@ class PostgresKnowledgeStore:
             await session.commit()
 
     async def search(
-        self, workspace_id: str, query_vector: list[float], limit: int
+        self,
+        workspace_id: str,
+        query_vector: list[float],
+        limit: int,
     ) -> list[SearchHit]:
         if len(query_vector) != DATABASE_EMBEDDING_DIMENSIONS:
             raise ValueError(
@@ -257,7 +282,9 @@ class PostgresKnowledgeStore:
         return hits
 
     async def graph_context(
-        self, workspace_id: str, query: str
+        self,
+        workspace_id: str,
+        query: str,
     ) -> tuple[list[Entity], list[Relationship]]:
         tokens = sorted({token.lower() for token in query.split() if len(token) > 2})
         if not tokens:
