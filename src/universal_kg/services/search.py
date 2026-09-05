@@ -2,12 +2,17 @@ from __future__ import annotations
 
 from universal_kg.domain import SearchRequest, SearchResponse
 from universal_kg.processing.embeddings import EmbeddingProvider, get_embedding_provider
-from universal_kg.storage.memory import MemoryKnowledgeStore, store
+from universal_kg.storage.base import KnowledgeStore
+from universal_kg.storage.factory import get_knowledge_store
 
 
 class SearchService:
-    def __init__(self, knowledge_store: MemoryKnowledgeStore | None = None, embedding_provider: EmbeddingProvider | None = None) -> None:
-        self.knowledge_store = knowledge_store or store
+    def __init__(
+        self,
+        knowledge_store: KnowledgeStore | None = None,
+        embedding_provider: EmbeddingProvider | None = None,
+    ) -> None:
+        self.knowledge_store = knowledge_store or get_knowledge_store()
         self.embedding_provider = embedding_provider or get_embedding_provider()
 
     async def search(self, request: SearchRequest) -> SearchResponse:
@@ -16,5 +21,12 @@ class SearchService:
         entities = []
         relationships = []
         if request.include_graph:
-            entities, relationships = await self.knowledge_store.graph_context(request.workspace_id, request.query)
-        return SearchResponse(query=request.query, hits=hits, related_entities=entities, relationships=relationships)
+            entities, relationships = await self.knowledge_store.graph_context(
+                request.workspace_id, request.query
+            )
+        return SearchResponse(
+            query=request.query,
+            hits=hits,
+            related_entities=entities,
+            relationships=relationships,
+        )
