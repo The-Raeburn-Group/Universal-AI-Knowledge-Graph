@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
-from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, String, Text, or_, select, text
+from pgvector.sqlalchemy import Vector  # type: ignore[import-untyped]
+from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, String, Table, Text, or_, select, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
@@ -106,7 +106,7 @@ class PostgresKnowledgeStore:
         self._sessions = async_sessionmaker(self._engine, expire_on_commit=False)
 
     async def upsert_document(self, document: Document) -> None:
-        table = DocumentRecord.__table__
+        table = cast(Table, DocumentRecord.__table__)
         statement = pg_insert(table).values(
             id=document.id,
             workspace_id=document.workspace_id,
@@ -156,7 +156,7 @@ class PostgresKnowledgeStore:
             }
             for chunk, vector in zip(chunks, vectors, strict=True)
         ]
-        table = ChunkRecord.__table__
+        table = cast(Table, ChunkRecord.__table__)
         statement = pg_insert(table).values(values)
         statement = statement.on_conflict_do_update(
             index_elements=[table.c.id],
@@ -190,7 +190,7 @@ class PostgresKnowledgeStore:
                     }
                     for entity in entities
                 ]
-                table = EntityRecord.__table__
+                table = cast(Table, EntityRecord.__table__)
                 entity_statement = pg_insert(table).values(entity_values)
                 entity_statement = entity_statement.on_conflict_do_update(
                     index_elements=[table.c.id],
@@ -217,7 +217,7 @@ class PostgresKnowledgeStore:
                     }
                     for relationship in relationships
                 ]
-                table = RelationshipRecord.__table__
+                table = cast(Table, RelationshipRecord.__table__)
                 relationship_statement = pg_insert(table).values(relationship_values)
                 relationship_statement = relationship_statement.on_conflict_do_update(
                     index_elements=[table.c.id],
