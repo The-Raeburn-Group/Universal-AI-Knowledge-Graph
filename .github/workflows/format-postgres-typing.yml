@@ -1,0 +1,35 @@
+name: Format PostgreSQL typing
+
+on:
+  push:
+    branches: [feat/postgres-pgvector-persistence]
+    paths:
+      - .github/workflows/format-postgres-typing.yml
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/postgres-pgvector-persistence
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install ruff==0.8.4
+      - name: Normalize imports and formatting
+        run: |
+          ruff check --select I --fix src/universal_kg/storage/postgres.py
+          ruff format src/universal_kg/storage/postgres.py
+      - name: Commit normalization if needed
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add src/universal_kg/storage/postgres.py
+            git commit -m "style(storage): normalize typed PostgreSQL store"
+            git push origin HEAD:feat/postgres-pgvector-persistence
+          fi
