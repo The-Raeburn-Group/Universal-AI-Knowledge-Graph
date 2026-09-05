@@ -336,7 +336,9 @@ class PostgresKnowledgeStore:
     async def check_ready(self) -> None:
         async with self._engine.connect() as connection:
             await connection.execute(text("select 1"))
-            version_result = await connection.execute(text("select version_num from alembic_version"))
+            version_result = await connection.execute(
+                text("select version_num from alembic_version")
+            )
             current_revision = version_result.scalar_one_or_none()
             if current_revision != EXPECTED_ALEMBIC_REVISION:
                 raise RuntimeError(
