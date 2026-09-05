@@ -13,6 +13,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from universal_kg.domain import Chunk, Document, Entity, Relationship, SearchHit
 
 DATABASE_EMBEDDING_DIMENSIONS = 384
+EXPECTED_ALEMBIC_REVISION = "20260905_0001"
 
 
 class Base(DeclarativeBase):
@@ -335,9 +336,13 @@ class PostgresKnowledgeStore:
     async def check_ready(self) -> None:
         async with self._engine.connect() as connection:
             await connection.execute(text("select 1"))
-            version = await connection.execute(text("select version_num from alembic_version"))
-            if version.scalar_one_or_none() is None:
-                raise RuntimeError("database_schema_not_migrated")
+            version_result = await connection.execute(text("select version_num from alembic_version"))
+            current_revision = version_result.scalar_one_or_none()
+            if current_revision != EXPECTED_ALEMBIC_REVISION:
+                raise RuntimeError(
+                    "database_schema_revision_mismatch:"
+                    f"{current_revision or 'none'}:{EXPECTED_ALEMBIC_REVISION}"
+                )
 
     async def close(self) -> None:
         await self._engine.dispose()
