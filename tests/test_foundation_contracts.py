@@ -102,7 +102,8 @@ def test_storage_factory_defaults_to_memory_and_cache_can_be_cleared() -> None:
 
 
 def test_postgres_store_rejects_schema_dimension_drift_before_connecting() -> None:
-    with pytest.raises(ValueError, match="Changing vector dimensions requires a versioned database migration"):
+    message = "Changing vector dimensions requires a versioned database migration"
+    with pytest.raises(ValueError, match=message):
         PostgresKnowledgeStore(
             "postgresql+psycopg://ukg:ukg@localhost:5432/ukg",
             embedding_dimensions=768,
