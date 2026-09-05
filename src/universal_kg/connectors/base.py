@@ -21,7 +21,7 @@ class Connector(ABC):
         self.config = config
 
     @abstractmethod
-    async def load(self) -> AsyncIterator[DocumentIn]:
+    def load(self) -> AsyncIterator[DocumentIn]:
         raise NotImplementedError
 
 

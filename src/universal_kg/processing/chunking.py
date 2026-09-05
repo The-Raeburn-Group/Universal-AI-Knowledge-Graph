@@ -20,7 +20,15 @@ def chunk_document(document: Document) -> list[Chunk]:
         end = min(start + max_chars, len(text))
         chunk_text = text[start:end].strip()
         if chunk_text:
-            chunks.append(Chunk(document_id=document.id, workspace_id=document.workspace_id, text=chunk_text, ordinal=ordinal, metadata={"title": document.title, "source": document.source}))
+            chunks.append(
+                Chunk(
+                    document_id=document.id,
+                    workspace_id=document.workspace_id,
+                    text=chunk_text,
+                    ordinal=ordinal,
+                    metadata={"title": document.title, "source": document.source},
+                )
+            )
             ordinal += 1
         if end >= len(text):
             break

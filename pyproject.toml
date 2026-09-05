@@ -39,7 +39,8 @@ dev = [
   "ruff==0.8.4",
   "mypy==1.14.0",
   "types-beautifulsoup4==4.12.0.20241020",
-  "coverage==7.6.9"
+  "coverage==7.6.9",
+  "openai==1.58.1"
 ]
 openai = ["openai==1.58.1"]
 
@@ -67,6 +68,7 @@ packages = ["universal_kg"]
 addopts = "-q --cov=universal_kg --cov-report=term-missing"
 testpaths = ["tests"]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 
 [tool.coverage.run]
 source = ["src/universal_kg"]

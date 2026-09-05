@@ -24,7 +24,10 @@ class InMemoryRateLimiter:
         while bucket and bucket[0] <= now - self.window_seconds:
             bucket.popleft()
         if len(bucket) >= self.max_requests:
-            raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Rate limit exceeded")
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Rate limit exceeded",
+            )
         bucket.append(now)
 
 
@@ -38,10 +41,22 @@ def client_key(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
-def audit_event(action: str, workspace_id: str | None, metadata: dict[str, Any] | None = None) -> None:
-    logger.info("audit_event", action=action, workspace_id=workspace_id, metadata=metadata or {})
+def audit_event(
+    action: str,
+    workspace_id: str | None,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    logger.info(
+        "audit_event",
+        action=action,
+        workspace_id=workspace_id,
+        metadata=metadata or {},
+    )
 
 
 def require_human_approval(approved: bool, action: str) -> None:
     if not approved:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Human approval required for {action}")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Human approval required for {action}",
+        )

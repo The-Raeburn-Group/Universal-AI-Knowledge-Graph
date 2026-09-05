@@ -40,7 +40,12 @@ class LocalHashEmbeddingProvider(EmbeddingProvider):
 
 
 class OpenAIEmbeddingProvider(EmbeddingProvider):
-    def __init__(self, api_key: str, dimensions: int = 1536, model: str = "text-embedding-3-small") -> None:
+    def __init__(
+        self,
+        api_key: str,
+        dimensions: int = 384,
+        model: str = "text-embedding-3-small",
+    ) -> None:
         self.api_key = api_key
         self.dimensions = dimensions
         self.model = model
@@ -49,12 +54,22 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
         from openai import AsyncOpenAI
 
         client = AsyncOpenAI(api_key=self.api_key)
-        response = await client.embeddings.create(model=self.model, input=texts)
-        return [item.embedding for item in response.data]
+        response = await client.embeddings.create(
+            model=self.model,
+            input=texts,
+            dimensions=self.dimensions,
+        )
+        vectors = [item.embedding for item in response.data]
+        if any(len(vector) != self.dimensions for vector in vectors):
+            raise RuntimeError("embedding_provider_dimension_mismatch")
+        return vectors
 
 
 def get_embedding_provider(settings: Settings | None = None) -> EmbeddingProvider:
     settings = settings or get_settings()
     if settings.embedding_provider == "openai" and settings.openai_api_key:
-        return OpenAIEmbeddingProvider(api_key=settings.openai_api_key)
+        return OpenAIEmbeddingProvider(
+            api_key=settings.openai_api_key,
+            dimensions=settings.embedding_dimensions,
+        )
     return LocalHashEmbeddingProvider(dimensions=settings.embedding_dimensions)
