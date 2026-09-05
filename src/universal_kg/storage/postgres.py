@@ -4,7 +4,19 @@ from datetime import datetime
 from typing import Any, cast
 
 from pgvector.sqlalchemy import Vector  # type: ignore[import-untyped]
-from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, String, Table, Text, or_, select, text
+from sqlalchemy import (
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Table,
+    Text,
+    or_,
+    select,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
@@ -304,9 +316,7 @@ class PostgresKnowledgeStore:
                     )
                     .limit(50)
                 )
-                relationship_rows = list(
-                    (await session.scalars(relationship_statement)).all()
-                )
+                relationship_rows = list((await session.scalars(relationship_statement)).all())
 
         entities = [
             Entity(
