@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Awaitable, Callable
+from typing import Annotated
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -34,10 +35,13 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type", "X-API-Key"],
 )
 
+SettingsDependency = Annotated[Settings, Depends(get_settings)]
+ApiKeyHeader = Annotated[str | None, Header()]
+
 
 async def require_api_key(
-    x_api_key: str | None = Header(default=None),
-    app_settings: Settings = Depends(get_settings),
+    app_settings: SettingsDependency,
+    x_api_key: ApiKeyHeader = None,
 ) -> None:
     if app_settings.api_key and x_api_key != app_settings.api_key:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
@@ -67,7 +71,7 @@ async def security_middleware(
 
 
 @app.get("/health")
-async def health(app_settings: Settings = Depends(get_settings)) -> dict[str, str]:
+async def health(app_settings: SettingsDependency) -> dict[str, str]:
     return {
         "status": "ok",
         "service": app_settings.app_name,
