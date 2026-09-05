@@ -13,39 +13,46 @@ from universal_kg.storage.postgres import PostgresKnowledgeStore
 
 
 @pytest.mark.asyncio
-async def test_postgres_ingestion_search_and_workspace_isolation() -> None:
+async def test_postgres_ingestion_survives_restart_and_isolates_workspaces() -> None:
     database_url = os.environ.get("UKG_DATABASE_URL")
     if not database_url:
         pytest.skip("UKG_DATABASE_URL is required for PostgreSQL integration test")
 
-    store = PostgresKnowledgeStore(database_url, embedding_dimensions=384)
     embedding_provider = LocalHashEmbeddingProvider(dimensions=384)
-    ingestion = IngestionService(store, embedding_provider)
-    search = SearchService(store, embedding_provider)
     workspace_a = f"postgres-a-{uuid4()}"
     workspace_b = f"postgres-b-{uuid4()}"
+    first_store = PostgresKnowledgeStore(database_url, embedding_dimensions=384)
+    document_a_id = ""
 
     try:
-        await store.check_ready()
+        await first_store.check_ready()
+        ingestion = IngestionService(first_store, embedding_provider)
         document_a = await ingestion.ingest(
             DocumentIn(
                 workspace_id=workspace_a,
                 source="manual",
                 title="Tenant A security note",
-                body="Acme renewal requires a security review. Sarah owns procurement.",
+                body="Acme Renewal requires Security Review. Sarah owns Procurement.",
                 metadata={"tenant": "a"},
             )
         )
+        document_a_id = document_a.id
         await ingestion.ingest(
             DocumentIn(
                 workspace_id=workspace_b,
                 source="manual",
                 title="Tenant B security note",
-                body="Acme renewal also mentions security review in another workspace.",
+                body="Acme Renewal also requires Security Review. Brian owns Procurement.",
                 metadata={"tenant": "b"},
             )
         )
+    finally:
+        await first_store.close()
 
+    reopened_store = PostgresKnowledgeStore(database_url, embedding_dimensions=384)
+    try:
+        await reopened_store.check_ready()
+        search = SearchService(reopened_store, embedding_provider)
         response = await search.search(
             SearchRequest(
                 workspace_id=workspace_a,
@@ -55,8 +62,13 @@ async def test_postgres_ingestion_search_and_workspace_isolation() -> None:
         )
 
         assert response.hits
-        assert response.hits[0].document_id == document_a.id
+        assert response.hits[0].document_id == document_a_id
         assert all(hit.metadata.get("tenant") == "a" for hit in response.hits)
-        assert all(hit.document_id == document_a.id for hit in response.hits)
+        assert all(hit.document_id == document_a_id for hit in response.hits)
+
+        entities, relationships = await reopened_store.graph_context(workspace_a, "Acme Renewal")
+        assert entities
+        assert all(entity.workspace_id == workspace_a for entity in entities)
+        assert all(relationship.workspace_id == workspace_a for relationship in relationships)
     finally:
-        await store.close()
+        await reopened_store.close()
