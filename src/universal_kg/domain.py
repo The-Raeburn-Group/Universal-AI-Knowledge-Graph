@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -34,6 +34,28 @@ class EntityType(StrEnum):
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+
+class ContentSecurity(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    origin: Literal["knowledge-retrieval"] = "knowledge-retrieval"
+    trust: Literal["untrusted"] = "untrusted"
+    instruction_authority: Literal["none"] = Field(
+        default="none",
+        serialization_alias="instructionAuthority",
+    )
+    handling: Literal["data-only"] = "data-only"
+    injection_detected: bool = Field(default=False, serialization_alias="injectionDetected")
+    signals: list[str] = Field(default_factory=list)
+
+
+class RetrievalProvenance(BaseModel):
+    origin: Literal["knowledge-retrieval"] = "knowledge-retrieval"
+    workspace_id: str
+    source: str
+    document_id: str
+    chunk_id: str
 
 
 class DocumentIn(StrictModel):
@@ -107,6 +129,8 @@ class SearchHit(BaseModel):
     score: float
     source: str
     metadata: dict[str, Any] = Field(default_factory=dict)
+    provenance: RetrievalProvenance | None = None
+    security: ContentSecurity | None = None
 
 
 class SearchResponse(BaseModel):
@@ -114,3 +138,4 @@ class SearchResponse(BaseModel):
     hits: list[SearchHit]
     related_entities: list[Entity] = Field(default_factory=list)
     relationships: list[Relationship] = Field(default_factory=list)
+    security: ContentSecurity | None = None
