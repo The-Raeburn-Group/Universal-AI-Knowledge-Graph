@@ -15,9 +15,7 @@ def access_allows(policy: AccessPolicy, context: AccessContext) -> bool:
         return True
     if set(context.roles).intersection(policy.roles):
         return True
-    if set(context.groups).intersection(policy.groups):
-        return True
-    return False
+    return bool(set(context.groups).intersection(policy.groups))
 
 
 def ensure_workspace_access(workspace_id: str, context: AccessContext) -> None:

@@ -17,13 +17,13 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 _DEFAULT_ACCESS = (
-    "'{"
-    '"visibility":"workspace",'
-    '"principals":[],'
-    '"roles":[],'
-    '"groups":[],'
-    '"source_acl_ref":null'
-    "}'::jsonb"
+    "jsonb_build_object("
+    "'visibility', 'workspace', "
+    "'principals', '[]'::jsonb, "
+    "'roles', '[]'::jsonb, "
+    "'groups', '[]'::jsonb, "
+    "'source_acl_ref', NULL"
+    ")"
 )
 
 

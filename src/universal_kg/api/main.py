@@ -63,9 +63,10 @@ async def require_api_key(
     app_settings: SettingsDependency,
     x_api_key: ApiKeyHeader = None,
 ) -> None:
-    if app_settings.api_key:
-        if not x_api_key or not secrets.compare_digest(x_api_key, app_settings.api_key):
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
+    if app_settings.api_key and (
+        not x_api_key or not secrets.compare_digest(x_api_key, app_settings.api_key)
+    ):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
 
 
 async def delegated_access_context(
