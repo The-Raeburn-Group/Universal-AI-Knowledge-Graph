@@ -30,7 +30,16 @@ def test_end_to_end_ingest_then_search() -> None:
         json={"workspace_id": "e2e", "query": "GitHub security review", "limit": 5},
     )
     assert search_response.status_code == 200
-    assert search_response.json()["hits"]
+    payload = search_response.json()
+    assert payload["hits"]
+    hit = payload["hits"][0]
+    assert hit["provenance"]["origin"] == "knowledge-retrieval"
+    assert hit["provenance"]["workspace_id"] == "e2e"
+    assert hit["security"]["trust"] == "untrusted"
+    assert hit["security"]["instructionAuthority"] == "none"
+    assert hit["security"]["handling"] == "data-only"
+    assert payload["security"]["trust"] == "untrusted"
+    assert payload["security"]["instructionAuthority"] == "none"
 
 
 def test_rejects_invalid_workspace() -> None:
