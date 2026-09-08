@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from hashlib import sha256
+
 import pytest
 
 from universal_kg.domain import DocumentIn, SearchRequest
@@ -12,9 +14,14 @@ async def test_ingestion_and_search_round_trip() -> None:
     document = DocumentIn(
         workspace_id="test",
         source="manual",
+        external_id="crm-note-42",
         title="Customer note",
         body="Acme Corp needs a security review before renewal. Sarah owns procurement.",
-        metadata={"system": "crm"},
+        metadata={
+            "system": "crm",
+            "source_uri": "https://crm.example.test/notes/42",
+            "source_version": "etag-2026-09-08",
+        },
     )
     created = await IngestionService().ingest(document)
     assert created.title == "Customer note"
@@ -33,6 +40,15 @@ async def test_ingestion_and_search_round_trip() -> None:
     assert hit.provenance.workspace_id == "test"
     assert hit.provenance.document_id == created.id
     assert hit.provenance.chunk_id == hit.chunk_id
+    assert hit.citation is not None
+    assert hit.citation.workspace_id == "test"
+    assert hit.citation.source == "manual"
+    assert hit.citation.document_id == created.id
+    assert hit.citation.chunk_id == hit.chunk_id
+    assert hit.citation.source_uri == "https://crm.example.test/notes/42"
+    assert hit.citation.source_version == "etag-2026-09-08"
+    assert hit.citation.content_sha256 == sha256(hit.text.encode("utf-8")).hexdigest()
+    assert hit.citation.retrieved_at.tzinfo is not None
     assert hit.security is not None
     assert hit.security.trust == "untrusted"
     assert hit.security.instruction_authority == "none"
@@ -65,6 +81,9 @@ async def test_retrieved_prompt_injection_is_flagged_without_losing_evidence() -
     hit = response.hits[0]
     assert hit.document_id == created.id
     assert hostile in hit.text
+    assert hit.citation is not None
+    assert hit.citation.source_uri is None
+    assert hit.citation.source_version is None
     assert hit.security is not None
     assert hit.security.injection_detected is True
     assert "instruction_override" in hit.security.signals

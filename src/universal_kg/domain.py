@@ -58,6 +58,17 @@ class RetrievalProvenance(BaseModel):
     chunk_id: str
 
 
+class CitationProvenance(BaseModel):
+    workspace_id: str
+    source: str
+    document_id: str
+    chunk_id: str
+    source_uri: str | None = Field(default=None, max_length=2048)
+    source_version: str | None = Field(default=None, max_length=512)
+    retrieved_at: datetime
+    content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
 class DocumentIn(StrictModel):
     workspace_id: str = Field(min_length=1, max_length=128, pattern=r"^[a-zA-Z0-9_.:-]+$")
     source: SourceType | str
@@ -130,6 +141,7 @@ class SearchHit(BaseModel):
     source: str
     metadata: dict[str, Any] = Field(default_factory=dict)
     provenance: RetrievalProvenance | None = None
+    citation: CitationProvenance | None = None
     security: ContentSecurity | None = None
 
 

@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+from hashlib import sha256
+
 from universal_kg.content_security import assess_retrieved_content
 from universal_kg.domain import (
+    CitationProvenance,
     Entity,
     Relationship,
     RetrievalProvenance,
@@ -18,8 +22,29 @@ def _metadata_values(metadata: dict[str, object]) -> list[str]:
     return [str(value) for value in metadata.values()]
 
 
+def _metadata_string(metadata: dict[str, object], key: str) -> str | None:
+    value = metadata.get(key)
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    return value or None
+
+
 def _hit_security_values(hit: SearchHit) -> list[str]:
     return [hit.title, hit.text, hit.source, *_metadata_values(hit.metadata)]
+
+
+def _citation(hit: SearchHit, workspace_id: str, retrieved_at: datetime) -> CitationProvenance:
+    return CitationProvenance(
+        workspace_id=workspace_id,
+        source=hit.source,
+        document_id=hit.document_id,
+        chunk_id=hit.chunk_id,
+        source_uri=_metadata_string(hit.metadata, "source_uri"),
+        source_version=_metadata_string(hit.metadata, "source_version"),
+        retrieved_at=retrieved_at,
+        content_sha256=sha256(hit.text.encode("utf-8")).hexdigest(),
+    )
 
 
 def _graph_security_values(
@@ -52,6 +77,7 @@ class SearchService:
     async def search(self, request: SearchRequest) -> SearchResponse:
         vector = (await self.embedding_provider.embed([request.query]))[0]
         raw_hits = await self.knowledge_store.search(request.workspace_id, vector, request.limit)
+        retrieved_at = datetime.now(UTC)
 
         hits: list[SearchHit] = []
         retrieval_values: list[str] = []
@@ -67,6 +93,7 @@ class SearchService:
                             document_id=hit.document_id,
                             chunk_id=hit.chunk_id,
                         ),
+                        "citation": _citation(hit, request.workspace_id, retrieved_at),
                         "security": assess_retrieved_content(security_values),
                     }
                 )
