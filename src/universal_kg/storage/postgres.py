@@ -37,7 +37,7 @@ EXPECTED_ALEMBIC_REVISION = "20260908_0002"
 
 
 def _policy_json(policy: AccessPolicy) -> dict[str, Any]:
-    return cast(dict[str, Any], policy.model_dump(mode="json"))
+    return policy.model_dump(mode="json")
 
 
 def _access_filter(column: Any, access: AccessContext) -> Any:
