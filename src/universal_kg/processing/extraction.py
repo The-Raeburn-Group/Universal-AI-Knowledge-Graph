@@ -11,6 +11,7 @@ _CAPITALISED = re.compile(r"\b[A-Z][A-Za-z0-9&._-]*(?:\s+[A-Z][A-Za-z0-9&._-]*){
 def extract_entities(chunks: list[Chunk]) -> list[Entity]:
     counts: Counter[str] = Counter()
     workspace_id = chunks[0].workspace_id if chunks else "default"
+    access_control = chunks[0].access_control.model_copy(deep=True) if chunks else None
     for chunk in chunks:
         for match in _CAPITALISED.findall(chunk.text):
             value = match.strip()
@@ -18,7 +19,13 @@ def extract_entities(chunks: list[Chunk]) -> list[Entity]:
                 counts[value] += 1
 
     return [
-        Entity(workspace_id=workspace_id, name=name, type="concept", metadata={"mentions": count})
+        Entity(
+            workspace_id=workspace_id,
+            name=name,
+            type="concept",
+            metadata={"mentions": count},
+            **({"access_control": access_control.model_copy(deep=True)} if access_control else {}),
+        )
         for name, count in counts.most_common(50)
     ]
 
@@ -38,6 +45,7 @@ def extract_relationships(chunks: list[Chunk], entities: list[Entity]) -> list[R
                     evidence_chunk_id=chunk.id,
                     confidence=0.55,
                     metadata={"extractor": "rule-based-v1"},
+                    access_control=chunk.access_control.model_copy(deep=True),
                 )
             )
     return relationships
