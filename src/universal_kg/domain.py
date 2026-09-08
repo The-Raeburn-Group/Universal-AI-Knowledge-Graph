@@ -5,7 +5,7 @@ from enum import StrEnum
 from typing import Any, Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class SourceType(StrEnum):
@@ -34,6 +34,37 @@ class EntityType(StrEnum):
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+
+class AccessControl(StrictModel):
+    visibility: Literal["workspace", "restricted"] = "workspace"
+    allowed_principals: list[str] = Field(default_factory=list, max_length=256)
+    source_acl_version: str | None = Field(default=None, max_length=512)
+
+    @field_validator("allowed_principals")
+    @classmethod
+    def validate_principals(cls, values: list[str]) -> list[str]:
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for raw in values:
+            value = raw.strip()
+            if not value or len(value) > 256:
+                raise ValueError("principal IDs must be non-empty and at most 256 characters")
+            if value not in seen:
+                normalized.append(value)
+                seen.add(value)
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_visibility(self) -> AccessControl:
+        if self.visibility == "workspace" and self.allowed_principals:
+            raise ValueError("workspace-visible content must not declare allowed_principals")
+        return self
+
+    def allows(self, principal_ids: frozenset[str]) -> bool:
+        if self.visibility == "workspace":
+            return True
+        return bool(principal_ids.intersection(self.allowed_principals))
 
 
 class ContentSecurity(BaseModel):
@@ -76,6 +107,7 @@ class DocumentIn(StrictModel):
     title: str = Field(min_length=1, max_length=512)
     body: str = Field(min_length=1, max_length=2_000_000)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    access_control: AccessControl = Field(default_factory=AccessControl)
 
     @field_validator("source")
     @classmethod
@@ -94,6 +126,7 @@ class Document(BaseModel):
     title: str
     body: str
     metadata: dict[str, Any] = Field(default_factory=dict)
+    access_control: AccessControl = Field(default_factory=AccessControl)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
@@ -104,6 +137,7 @@ class Chunk(BaseModel):
     text: str
     ordinal: int
     metadata: dict[str, Any] = Field(default_factory=dict)
+    access_control: AccessControl = Field(default_factory=AccessControl)
 
 
 class Entity(BaseModel):
@@ -112,6 +146,7 @@ class Entity(BaseModel):
     name: str
     type: EntityType | str = EntityType.CONCEPT
     metadata: dict[str, Any] = Field(default_factory=dict)
+    access_control: AccessControl = Field(default_factory=AccessControl)
 
 
 class Relationship(BaseModel):
@@ -123,6 +158,7 @@ class Relationship(BaseModel):
     evidence_chunk_id: str | None = None
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    access_control: AccessControl = Field(default_factory=AccessControl)
 
 
 class SearchRequest(StrictModel):
