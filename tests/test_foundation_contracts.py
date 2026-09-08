@@ -44,6 +44,7 @@ async def test_json_connector_loads_records_with_workspace_provenance(tmp_path) 
     assert [document.title for document in documents] == ["Renewal", "Procurement"]
     assert all(document.workspace_id == "tenant-a" for document in documents)
     assert all(document.metadata["path"] == str(payload_path) for document in documents)
+    assert all(document.access.visibility == "workspace" for document in documents)
 
 
 def test_connector_registry_rejects_unknown_connector() -> None:
@@ -54,12 +55,20 @@ def test_connector_registry_rejects_unknown_connector() -> None:
         connector_registry.create("missing", config)
 
 
-def test_production_requires_persistent_postgres_storage() -> None:
+def test_production_requires_persistent_postgres_storage_and_strong_api_key() -> None:
     with pytest.raises(ValidationError, match="production requires UKG_STORAGE_BACKEND=postgres"):
-        Settings(environment="production", storage_backend="memory")
+        Settings(environment="production", storage_backend="memory", api_key="x" * 32)
 
-    settings = Settings(environment="production", storage_backend="postgres")
+    with pytest.raises(ValidationError, match="strong UKG_API_KEY"):
+        Settings(environment="production", storage_backend="postgres")
+
+    settings = Settings(
+        environment="production",
+        storage_backend="postgres",
+        api_key="production-service-key-1234567890",
+    )
     assert settings.storage_backend == "postgres"
+    assert settings.api_key is not None
 
 
 @pytest.mark.asyncio

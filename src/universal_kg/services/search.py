@@ -3,8 +3,10 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from hashlib import sha256
 
+from universal_kg.access import ensure_workspace_access
 from universal_kg.content_security import assess_retrieved_content
 from universal_kg.domain import (
+    AccessContext,
     CitationProvenance,
     Entity,
     Relationship,
@@ -74,9 +76,15 @@ class SearchService:
         self.knowledge_store = knowledge_store or get_knowledge_store()
         self.embedding_provider = embedding_provider or get_embedding_provider()
 
-    async def search(self, request: SearchRequest) -> SearchResponse:
+    async def search(self, request: SearchRequest, access: AccessContext) -> SearchResponse:
+        ensure_workspace_access(request.workspace_id, access)
         vector = (await self.embedding_provider.embed([request.query]))[0]
-        raw_hits = await self.knowledge_store.search(request.workspace_id, vector, request.limit)
+        raw_hits = await self.knowledge_store.search(
+            request.workspace_id,
+            vector,
+            request.limit,
+            access,
+        )
         retrieved_at = datetime.now(UTC)
 
         hits: list[SearchHit] = []
@@ -103,7 +111,9 @@ class SearchService:
         relationships: list[Relationship] = []
         if request.include_graph:
             entities, relationships = await self.knowledge_store.graph_context(
-                request.workspace_id, request.query
+                request.workspace_id,
+                request.query,
+                access,
             )
             retrieval_values.extend(_graph_security_values(entities, relationships))
 

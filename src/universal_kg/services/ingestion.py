@@ -18,7 +18,10 @@ class IngestionService:
         self.embedding_provider = embedding_provider or get_embedding_provider()
 
     async def ingest(self, payload: DocumentIn) -> Document:
-        document = Document(**payload.model_dump())
+        document = Document(
+            **payload.model_dump(exclude={"access"}),
+            access=payload.access,
+        )
         chunks = chunk_document(document)
         vectors = (
             await self.embedding_provider.embed([chunk.text for chunk in chunks]) if chunks else []

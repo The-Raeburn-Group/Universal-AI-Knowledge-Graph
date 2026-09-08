@@ -4,9 +4,26 @@ from hashlib import sha256
 
 import pytest
 
-from universal_kg.domain import DocumentIn, SearchRequest
+from universal_kg.access import AccessDeniedError
+from universal_kg.domain import AccessContext, AccessPolicy, DocumentIn, SearchRequest
 from universal_kg.services.ingestion import IngestionService
 from universal_kg.services.search import SearchService
+from universal_kg.storage.memory import MemoryKnowledgeStore
+
+
+def access(
+    workspace_id: str,
+    principal_id: str = "tester",
+    *,
+    roles: list[str] | None = None,
+    groups: list[str] | None = None,
+) -> AccessContext:
+    return AccessContext(
+        workspace_id=workspace_id,
+        principal_id=principal_id,
+        roles=roles or [],
+        groups=groups or [],
+    )
 
 
 @pytest.mark.asyncio
@@ -31,7 +48,8 @@ async def test_ingestion_and_search_round_trip() -> None:
             workspace_id="test",
             query="security review renewal",
             limit=3,
-        )
+        ),
+        access("test"),
     )
     assert response.hits
     hit = response.hits[0]
@@ -74,7 +92,8 @@ async def test_retrieved_prompt_injection_is_flagged_without_losing_evidence() -
     )
 
     response = await SearchService().search(
-        SearchRequest(workspace_id="hostile", query="suspicious external message", limit=3)
+        SearchRequest(workspace_id="hostile", query="suspicious external message", limit=3),
+        access("hostile"),
     )
 
     assert response.hits
@@ -92,3 +111,89 @@ async def test_retrieved_prompt_injection_is_flagged_without_losing_evidence() -
     assert "tool_escalation" in hit.security.signals
     assert response.security is not None
     assert response.security.injection_detected is True
+
+
+@pytest.mark.asyncio
+async def test_permissions_filter_before_ranking_and_graph_context() -> None:
+    store = MemoryKnowledgeStore()
+    ingestion = IngestionService(store)
+    search = SearchService(store)
+
+    workspace = "acl-test"
+    public_doc = await ingestion.ingest(
+        DocumentIn(
+            workspace_id=workspace,
+            source="manual",
+            title="Public renewal",
+            body="Project Public Renewal is visible across the workspace.",
+        )
+    )
+    alice_doc = await ingestion.ingest(
+        DocumentIn(
+            workspace_id=workspace,
+            source="crm",
+            title="Alice restricted",
+            body="Project Aurora Confidential requires executive review.",
+            access=AccessPolicy(
+                visibility="restricted",
+                principals=["Alice@Example.com"],
+                source_acl_ref="crm-acl:record-42:v7",
+            ),
+        )
+    )
+    finance_doc = await ingestion.ingest(
+        DocumentIn(
+            workspace_id=workspace,
+            source="database",
+            title="Finance restricted",
+            body="Project Ledger Confidential contains Finance Forecast details.",
+            access=AccessPolicy(
+                visibility="restricted",
+                roles=["Finance"],
+                groups=["Board"],
+                source_acl_ref="db-acl:finance:v3",
+            ),
+        )
+    )
+
+    outsider = access(workspace, "bob@example.com", roles=["viewer"], groups=["staff"])
+    outsider_response = await search.search(
+        SearchRequest(workspace_id=workspace, query="Project Confidential Renewal", limit=20),
+        outsider,
+    )
+    outsider_ids = {hit.document_id for hit in outsider_response.hits}
+    assert public_doc.id in outsider_ids
+    assert alice_doc.id not in outsider_ids
+    assert finance_doc.id not in outsider_ids
+    assert all("Aurora" not in entity.name for entity in outsider_response.related_entities)
+    assert all(
+        "Aurora" not in relationship.subject and "Aurora" not in relationship.object
+        for relationship in outsider_response.relationships
+    )
+
+    alice_response = await search.search(
+        SearchRequest(workspace_id=workspace, query="Aurora Confidential", limit=20),
+        access(workspace, "ALICE@example.com"),
+    )
+    assert alice_doc.id in {hit.document_id for hit in alice_response.hits}
+    assert any("Aurora" in entity.name for entity in alice_response.related_entities)
+
+    finance_response = await search.search(
+        SearchRequest(workspace_id=workspace, query="Ledger Finance Forecast", limit=20),
+        access(workspace, "fin-user", roles=["FINANCE"]),
+    )
+    assert finance_doc.id in {hit.document_id for hit in finance_response.hits}
+
+
+@pytest.mark.asyncio
+async def test_search_rejects_delegated_workspace_mismatch() -> None:
+    with pytest.raises(AccessDeniedError, match="delegated workspace"):
+        await SearchService().search(
+            SearchRequest(workspace_id="workspace-a", query="test"),
+            access("workspace-b"),
+        )
+
+
+def test_restricted_access_policy_requires_a_subject() -> None:
+    with pytest.raises(ValueError, match="restricted access requires"):
+        AccessPolicy(visibility="restricted")
