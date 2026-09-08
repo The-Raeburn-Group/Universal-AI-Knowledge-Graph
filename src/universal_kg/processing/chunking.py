@@ -27,6 +27,7 @@ def chunk_document(document: Document) -> list[Chunk]:
                     text=chunk_text,
                     ordinal=ordinal,
                     metadata={"title": document.title, "source": document.source},
+                    access=document.access,
                 )
             )
             ordinal += 1

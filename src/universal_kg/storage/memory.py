@@ -3,7 +3,8 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
-from universal_kg.domain import Chunk, Document, Entity, Relationship, SearchHit
+from universal_kg.access import access_allows
+from universal_kg.domain import AccessContext, Chunk, Document, Entity, Relationship, SearchHit
 
 
 def cosine(a: list[float], b: list[float]) -> float:
@@ -35,11 +36,20 @@ class MemoryKnowledgeStore:
         self.relationships.extend(relationships)
 
     async def search(
-        self, workspace_id: str, query_vector: list[float], limit: int
+        self,
+        workspace_id: str,
+        query_vector: list[float],
+        limit: int,
+        access: AccessContext,
     ) -> list[SearchHit]:
         scored: list[tuple[float, Chunk]] = []
         for chunk_id, chunk in self.chunks.items():
             if chunk.workspace_id != workspace_id:
+                continue
+            document = self.documents[chunk.document_id]
+            if not access_allows(document.access, access) or not access_allows(
+                chunk.access, access
+            ):
                 continue
             scored.append((cosine(query_vector, self.vectors[chunk_id]), chunk))
         scored.sort(key=lambda item: item[0], reverse=True)
@@ -60,13 +70,17 @@ class MemoryKnowledgeStore:
         return hits
 
     async def graph_context(
-        self, workspace_id: str, query: str
+        self,
+        workspace_id: str,
+        query: str,
+        access: AccessContext,
     ) -> tuple[list[Entity], list[Relationship]]:
         tokens = {token.lower() for token in query.split() if len(token) > 2}
         entities = [
             entity
             for entity in self.entities
             if entity.workspace_id == workspace_id
+            and access_allows(entity.access, access)
             and any(token in entity.name.lower() for token in tokens)
         ][:20]
         names = {entity.name for entity in entities}
@@ -74,6 +88,7 @@ class MemoryKnowledgeStore:
             rel
             for rel in self.relationships
             if rel.workspace_id == workspace_id
+            and access_allows(rel.access, access)
             and (rel.subject in names or rel.object in names)
         ][:50]
         return entities, relationships

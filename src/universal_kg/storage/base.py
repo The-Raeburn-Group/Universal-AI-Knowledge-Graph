@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from universal_kg.domain import Chunk, Document, Entity, Relationship, SearchHit
+from universal_kg.domain import AccessContext, Chunk, Document, Entity, Relationship, SearchHit
 
 
 class KnowledgeStore(Protocol):
@@ -15,11 +15,18 @@ class KnowledgeStore(Protocol):
     ) -> None: ...
 
     async def search(
-        self, workspace_id: str, query_vector: list[float], limit: int
+        self,
+        workspace_id: str,
+        query_vector: list[float],
+        limit: int,
+        access: AccessContext,
     ) -> list[SearchHit]: ...
 
     async def graph_context(
-        self, workspace_id: str, query: str
+        self,
+        workspace_id: str,
+        query: str,
+        access: AccessContext,
     ) -> tuple[list[Entity], list[Relationship]]: ...
 
     async def check_ready(self) -> None: ...

@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     environment: str = Field(default="development")
     api_key: str | None = Field(
         default=None,
-        description="Optional static API key for private deployments",
+        description="Static service credential for authenticated internal API access",
     )
     storage_backend: Literal["memory", "postgres"] = "memory"
     database_url: str = "postgresql+psycopg://ukg:ukg@localhost:5432/ukg"
@@ -26,9 +26,12 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     @model_validator(mode="after")
-    def validate_production_storage(self) -> Settings:
-        if self.environment.lower() == "production" and self.storage_backend != "postgres":
-            raise ValueError("production requires UKG_STORAGE_BACKEND=postgres")
+    def validate_production_security(self) -> Settings:
+        if self.environment.lower() == "production":
+            if self.storage_backend != "postgres":
+                raise ValueError("production requires UKG_STORAGE_BACKEND=postgres")
+            if not self.api_key or len(self.api_key) < 24:
+                raise ValueError("production requires a strong UKG_API_KEY (>= 24 characters)")
         return self
 
 

@@ -5,7 +5,7 @@ from enum import StrEnum
 from typing import Any, Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class SourceType(StrEnum):
@@ -34,6 +34,58 @@ class EntityType(StrEnum):
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+
+def _normalise_acl_values(values: list[str]) -> list[str]:
+    normalised: set[str] = set()
+    for value in values:
+        item = value.strip().lower()
+        if not item:
+            continue
+        if len(item) > 256:
+            raise ValueError("access-control identifiers must be <= 256 characters")
+        normalised.add(item)
+    return sorted(normalised)
+
+
+class AccessPolicy(StrictModel):
+    visibility: Literal["workspace", "restricted"] = "workspace"
+    principals: list[str] = Field(default_factory=list, max_length=200)
+    roles: list[str] = Field(default_factory=list, max_length=100)
+    groups: list[str] = Field(default_factory=list, max_length=200)
+    source_acl_ref: str | None = Field(default=None, max_length=512)
+
+    @field_validator("principals", "roles", "groups")
+    @classmethod
+    def normalise_subjects(cls, values: list[str]) -> list[str]:
+        return _normalise_acl_values(values)
+
+    @model_validator(mode="after")
+    def validate_restricted_policy(self) -> AccessPolicy:
+        if self.visibility == "restricted" and not (
+            self.principals or self.roles or self.groups
+        ):
+            raise ValueError(
+                "restricted access requires at least one principal, role or group"
+            )
+        return self
+
+
+class AccessContext(StrictModel):
+    workspace_id: str = Field(min_length=1, max_length=128, pattern=r"^[a-zA-Z0-9_.:-]+$")
+    principal_id: str = Field(min_length=1, max_length=256)
+    roles: list[str] = Field(default_factory=list, max_length=100)
+    groups: list[str] = Field(default_factory=list, max_length=200)
+
+    @field_validator("principal_id")
+    @classmethod
+    def normalise_principal(cls, value: str) -> str:
+        return value.strip().lower()
+
+    @field_validator("roles", "groups")
+    @classmethod
+    def normalise_subjects(cls, values: list[str]) -> list[str]:
+        return _normalise_acl_values(values)
 
 
 class ContentSecurity(BaseModel):
@@ -76,6 +128,7 @@ class DocumentIn(StrictModel):
     title: str = Field(min_length=1, max_length=512)
     body: str = Field(min_length=1, max_length=2_000_000)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    access: AccessPolicy = Field(default_factory=AccessPolicy)
 
     @field_validator("source")
     @classmethod
@@ -94,6 +147,7 @@ class Document(BaseModel):
     title: str
     body: str
     metadata: dict[str, Any] = Field(default_factory=dict)
+    access: AccessPolicy = Field(default_factory=AccessPolicy, exclude=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
@@ -104,6 +158,7 @@ class Chunk(BaseModel):
     text: str
     ordinal: int
     metadata: dict[str, Any] = Field(default_factory=dict)
+    access: AccessPolicy = Field(default_factory=AccessPolicy, exclude=True)
 
 
 class Entity(BaseModel):
@@ -112,6 +167,7 @@ class Entity(BaseModel):
     name: str
     type: EntityType | str = EntityType.CONCEPT
     metadata: dict[str, Any] = Field(default_factory=dict)
+    access: AccessPolicy = Field(default_factory=AccessPolicy, exclude=True)
 
 
 class Relationship(BaseModel):
@@ -123,6 +179,7 @@ class Relationship(BaseModel):
     evidence_chunk_id: str | None = None
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    access: AccessPolicy = Field(default_factory=AccessPolicy, exclude=True)
 
 
 class SearchRequest(StrictModel):

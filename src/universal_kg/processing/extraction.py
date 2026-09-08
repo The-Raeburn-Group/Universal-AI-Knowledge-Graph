@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 
-from universal_kg.domain import Chunk, Entity, Relationship
+from universal_kg.domain import AccessPolicy, Chunk, Entity, Relationship
 
 _CAPITALISED = re.compile(r"\b[A-Z][A-Za-z0-9&._-]*(?:\s+[A-Z][A-Za-z0-9&._-]*){0,4}\b")
 
@@ -11,6 +11,7 @@ _CAPITALISED = re.compile(r"\b[A-Z][A-Za-z0-9&._-]*(?:\s+[A-Z][A-Za-z0-9&._-]*){
 def extract_entities(chunks: list[Chunk]) -> list[Entity]:
     counts: Counter[str] = Counter()
     workspace_id = chunks[0].workspace_id if chunks else "default"
+    access = chunks[0].access if chunks else AccessPolicy()
     for chunk in chunks:
         for match in _CAPITALISED.findall(chunk.text):
             value = match.strip()
@@ -18,7 +19,13 @@ def extract_entities(chunks: list[Chunk]) -> list[Entity]:
                 counts[value] += 1
 
     return [
-        Entity(workspace_id=workspace_id, name=name, type="concept", metadata={"mentions": count})
+        Entity(
+            workspace_id=workspace_id,
+            name=name,
+            type="concept",
+            metadata={"mentions": count},
+            access=access,
+        )
         for name, count in counts.most_common(50)
     ]
 
@@ -38,6 +45,7 @@ def extract_relationships(chunks: list[Chunk], entities: list[Entity]) -> list[R
                     evidence_chunk_id=chunk.id,
                     confidence=0.55,
                     metadata={"extractor": "rule-based-v1"},
+                    access=chunk.access,
                 )
             )
     return relationships

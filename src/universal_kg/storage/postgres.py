@@ -22,10 +22,30 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-from universal_kg.domain import Chunk, Document, Entity, Relationship, SearchHit
+from universal_kg.domain import (
+    AccessContext,
+    AccessPolicy,
+    Chunk,
+    Document,
+    Entity,
+    Relationship,
+    SearchHit,
+)
 
 DATABASE_EMBEDDING_DIMENSIONS = 384
-EXPECTED_ALEMBIC_REVISION = "20260905_0001"
+EXPECTED_ALEMBIC_REVISION = "20260908_0002"
+
+
+def _policy_json(policy: AccessPolicy) -> dict[str, Any]:
+    return cast(dict[str, Any], policy.model_dump(mode="json"))
+
+
+def _access_filter(column: Any, access: AccessContext) -> Any:
+    clauses = [column["visibility"].astext == "workspace"]
+    clauses.append(column["principals"].contains([access.principal_id]))
+    clauses.extend(column["roles"].contains([role]) for role in access.roles)
+    clauses.extend(column["groups"].contains([group]) for group in access.groups)
+    return or_(*clauses)
 
 
 class Base(DeclarativeBase):
@@ -42,10 +62,12 @@ class DocumentRecord(Base):
     title: Mapped[str] = mapped_column(String(512), nullable=False)
     body: Mapped[str] = mapped_column(Text, nullable=False)
     metadata_json: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, nullable=False)
+    access_json: Mapped[dict[str, Any]] = mapped_column("access", JSONB, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     __table_args__ = (
         Index("documents_workspace_source_external_idx", "workspace_id", "source", "external_id"),
+        Index("documents_access_gin_idx", "access", postgresql_using="gin"),
     )
 
 
@@ -63,6 +85,7 @@ class ChunkRecord(Base):
     text: Mapped[str] = mapped_column(Text, nullable=False)
     ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
     metadata_json: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, nullable=False)
+    access_json: Mapped[dict[str, Any]] = mapped_column("access", JSONB, nullable=False)
     embedding: Mapped[list[float]] = mapped_column(
         Vector(DATABASE_EMBEDDING_DIMENSIONS),
         nullable=False,
@@ -70,6 +93,7 @@ class ChunkRecord(Base):
 
     __table_args__ = (
         Index("chunks_workspace_document_ordinal_idx", "workspace_id", "document_id", "ordinal"),
+        Index("chunks_access_gin_idx", "access", postgresql_using="gin"),
     )
 
 
@@ -81,8 +105,12 @@ class EntityRecord(Base):
     name: Mapped[str] = mapped_column(String(512), nullable=False)
     type: Mapped[str] = mapped_column(String(64), nullable=False)
     metadata_json: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, nullable=False)
+    access_json: Mapped[dict[str, Any]] = mapped_column("access", JSONB, nullable=False)
 
-    __table_args__ = (Index("entities_workspace_name_idx", "workspace_id", "name"),)
+    __table_args__ = (
+        Index("entities_workspace_name_idx", "workspace_id", "name"),
+        Index("entities_access_gin_idx", "access", postgresql_using="gin"),
+    )
 
 
 class RelationshipRecord(Base):
@@ -99,10 +127,12 @@ class RelationshipRecord(Base):
     )
     confidence: Mapped[float] = mapped_column(Float, nullable=False)
     metadata_json: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, nullable=False)
+    access_json: Mapped[dict[str, Any]] = mapped_column("access", JSONB, nullable=False)
 
     __table_args__ = (
         Index("relationships_workspace_subject_idx", "workspace_id", "subject"),
         Index("relationships_workspace_object_idx", "workspace_id", "object"),
+        Index("relationships_access_gin_idx", "access", postgresql_using="gin"),
     )
 
 
@@ -127,6 +157,7 @@ class PostgresKnowledgeStore:
             title=document.title,
             body=document.body,
             metadata=document.metadata,
+            access=_policy_json(document.access),
             created_at=document.created_at,
         )
         statement = statement.on_conflict_do_update(
@@ -138,6 +169,7 @@ class PostgresKnowledgeStore:
                 "title": statement.excluded.title,
                 "body": statement.excluded.body,
                 "metadata": statement.excluded.metadata,
+                "access": statement.excluded.access,
                 "created_at": statement.excluded.created_at,
             },
         )
@@ -164,6 +196,7 @@ class PostgresKnowledgeStore:
                 "text": chunk.text,
                 "ordinal": chunk.ordinal,
                 "metadata": chunk.metadata,
+                "access": _policy_json(chunk.access),
                 "embedding": vector,
             }
             for chunk, vector in zip(chunks, vectors, strict=True)
@@ -178,6 +211,7 @@ class PostgresKnowledgeStore:
                 "text": statement.excluded.text,
                 "ordinal": statement.excluded.ordinal,
                 "metadata": statement.excluded.metadata,
+                "access": statement.excluded.access,
                 "embedding": statement.excluded.embedding,
             },
         )
@@ -199,6 +233,7 @@ class PostgresKnowledgeStore:
                         "name": entity.name,
                         "type": str(entity.type),
                         "metadata": entity.metadata,
+                        "access": _policy_json(entity.access),
                     }
                     for entity in entities
                 ]
@@ -211,6 +246,7 @@ class PostgresKnowledgeStore:
                         "name": entity_statement.excluded.name,
                         "type": entity_statement.excluded.type,
                         "metadata": entity_statement.excluded.metadata,
+                        "access": entity_statement.excluded.access,
                     },
                 )
                 await session.execute(entity_statement)
@@ -226,6 +262,7 @@ class PostgresKnowledgeStore:
                         "evidence_chunk_id": relationship.evidence_chunk_id,
                         "confidence": relationship.confidence,
                         "metadata": relationship.metadata,
+                        "access": _policy_json(relationship.access),
                     }
                     for relationship in relationships
                 ]
@@ -241,6 +278,7 @@ class PostgresKnowledgeStore:
                         "evidence_chunk_id": relationship_statement.excluded.evidence_chunk_id,
                         "confidence": relationship_statement.excluded.confidence,
                         "metadata": relationship_statement.excluded.metadata,
+                        "access": relationship_statement.excluded.access,
                     },
                 )
                 await session.execute(relationship_statement)
@@ -252,6 +290,7 @@ class PostgresKnowledgeStore:
         workspace_id: str,
         query_vector: list[float],
         limit: int,
+        access: AccessContext,
     ) -> list[SearchHit]:
         if len(query_vector) != DATABASE_EMBEDDING_DIMENSIONS:
             raise ValueError(
@@ -261,7 +300,12 @@ class PostgresKnowledgeStore:
         statement = (
             select(DocumentRecord, ChunkRecord, distance.label("distance"))
             .join(DocumentRecord, DocumentRecord.id == ChunkRecord.document_id)
-            .where(ChunkRecord.workspace_id == workspace_id)
+            .where(
+                ChunkRecord.workspace_id == workspace_id,
+                DocumentRecord.workspace_id == workspace_id,
+                _access_filter(DocumentRecord.access_json, access),
+                _access_filter(ChunkRecord.access_json, access),
+            )
             .order_by(distance)
             .limit(limit)
         )
@@ -288,6 +332,7 @@ class PostgresKnowledgeStore:
         self,
         workspace_id: str,
         query: str,
+        access: AccessContext,
     ) -> tuple[list[Entity], list[Relationship]]:
         tokens = sorted({token.lower() for token in query.split() if len(token) > 2})
         if not tokens:
@@ -296,7 +341,11 @@ class PostgresKnowledgeStore:
         entity_conditions = [EntityRecord.name.ilike(f"%{token}%") for token in tokens]
         entity_statement = (
             select(EntityRecord)
-            .where(EntityRecord.workspace_id == workspace_id, or_(*entity_conditions))
+            .where(
+                EntityRecord.workspace_id == workspace_id,
+                _access_filter(EntityRecord.access_json, access),
+                or_(*entity_conditions),
+            )
             .limit(20)
         )
 
@@ -309,6 +358,7 @@ class PostgresKnowledgeStore:
                     select(RelationshipRecord)
                     .where(
                         RelationshipRecord.workspace_id == workspace_id,
+                        _access_filter(RelationshipRecord.access_json, access),
                         or_(
                             RelationshipRecord.subject.in_(names),
                             RelationshipRecord.object_name.in_(names),
@@ -325,6 +375,7 @@ class PostgresKnowledgeStore:
                 name=row.name,
                 type=row.type,
                 metadata=row.metadata_json,
+                access=AccessPolicy.model_validate(row.access_json),
             )
             for row in entity_rows
         ]
@@ -338,6 +389,7 @@ class PostgresKnowledgeStore:
                 evidence_chunk_id=row.evidence_chunk_id,
                 confidence=row.confidence,
                 metadata=row.metadata_json,
+                access=AccessPolicy.model_validate(row.access_json),
             )
             for row in relationship_rows
         ]
