@@ -442,30 +442,29 @@ class PostgresKnowledgeStore:
         deleted_at: datetime,
         purge_after: datetime,
     ) -> TombstoneDocumentResponse | None:
-        async with self._sessions() as session:
-            async with session.begin():
-                statement = (
-                    select(DocumentRecord)
-                    .where(
-                        DocumentRecord.workspace_id == workspace_id,
-                        DocumentRecord.id == document_id,
-                    )
-                    .with_for_update()
+        async with self._sessions() as session, session.begin():
+            statement = (
+                select(DocumentRecord)
+                .where(
+                    DocumentRecord.workspace_id == workspace_id,
+                    DocumentRecord.id == document_id,
                 )
-                document = (await session.scalars(statement)).one_or_none()
-                if document is None:
-                    return None
-                if document.deleted_at is None:
-                    document.deleted_at = deleted_at
-                    document.purge_after = purge_after
-                    document.deletion_reason = reason
-                return TombstoneDocumentResponse(
-                    document_id=document.id,
-                    workspace_id=document.workspace_id,
-                    deleted_at=document.deleted_at or deleted_at,
-                    purge_after=document.purge_after or purge_after,
-                    reason=document.deletion_reason or reason,
-                )
+                .with_for_update()
+            )
+            document = (await session.scalars(statement)).one_or_none()
+            if document is None:
+                return None
+            if document.deleted_at is None:
+                document.deleted_at = deleted_at
+                document.purge_after = purge_after
+                document.deletion_reason = reason
+            return TombstoneDocumentResponse(
+                document_id=document.id,
+                workspace_id=document.workspace_id,
+                deleted_at=document.deleted_at or deleted_at,
+                purge_after=document.purge_after or purge_after,
+                reason=document.deletion_reason or reason,
+            )
 
     async def run_retention(
         self,
@@ -473,37 +472,36 @@ class PostgresKnowledgeStore:
         as_of: datetime,
         purge_grace_days: int,
     ) -> tuple[int, int]:
-        async with self._sessions() as session:
-            async with session.begin():
-                expired_statement = select(DocumentRecord.id).where(
-                    DocumentRecord.workspace_id == workspace_id,
-                    DocumentRecord.deleted_at.is_(None),
-                    DocumentRecord.retention_until.is_not(None),
-                    DocumentRecord.retention_until <= as_of,
-                )
-                expired_ids = list((await session.scalars(expired_statement)).all())
-                if expired_ids:
-                    await session.execute(
-                        update(DocumentRecord)
-                        .where(DocumentRecord.id.in_(expired_ids))
-                        .values(
-                            deleted_at=as_of,
-                            purge_after=as_of + timedelta(days=purge_grace_days),
-                            deletion_reason="retention_expired",
-                        )
+        async with self._sessions() as session, session.begin():
+            expired_statement = select(DocumentRecord.id).where(
+                DocumentRecord.workspace_id == workspace_id,
+                DocumentRecord.deleted_at.is_(None),
+                DocumentRecord.retention_until.is_not(None),
+                DocumentRecord.retention_until <= as_of,
+            )
+            expired_ids = list((await session.scalars(expired_statement)).all())
+            if expired_ids:
+                await session.execute(
+                    update(DocumentRecord)
+                    .where(DocumentRecord.id.in_(expired_ids))
+                    .values(
+                        deleted_at=as_of,
+                        purge_after=as_of + timedelta(days=purge_grace_days),
+                        deletion_reason="retention_expired",
                     )
+                )
 
-                purge_statement = select(DocumentRecord.id).where(
-                    DocumentRecord.workspace_id == workspace_id,
-                    DocumentRecord.deleted_at.is_not(None),
-                    DocumentRecord.purge_after.is_not(None),
-                    DocumentRecord.purge_after <= as_of,
+            purge_statement = select(DocumentRecord.id).where(
+                DocumentRecord.workspace_id == workspace_id,
+                DocumentRecord.deleted_at.is_not(None),
+                DocumentRecord.purge_after.is_not(None),
+                DocumentRecord.purge_after <= as_of,
+            )
+            purge_ids = list((await session.scalars(purge_statement)).all())
+            if purge_ids:
+                await session.execute(
+                    delete(DocumentRecord).where(DocumentRecord.id.in_(purge_ids))
                 )
-                purge_ids = list((await session.scalars(purge_statement)).all())
-                if purge_ids:
-                    await session.execute(
-                        delete(DocumentRecord).where(DocumentRecord.id.in_(purge_ids))
-                    )
 
         return len(expired_ids), len(purge_ids)
 
