@@ -129,6 +129,7 @@ class DocumentIn(StrictModel):
     body: str = Field(min_length=1, max_length=2_000_000)
     metadata: dict[str, Any] = Field(default_factory=dict)
     access: AccessPolicy = Field(default_factory=AccessPolicy)
+    retention_days: int | None = Field(default=None, ge=1, le=3650)
 
     @field_validator("source")
     @classmethod
@@ -149,6 +150,10 @@ class Document(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
     access: AccessPolicy = Field(default_factory=AccessPolicy, exclude=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    retention_until: datetime | None = None
+    deleted_at: datetime | None = None
+    purge_after: datetime | None = None
+    deletion_reason: str | None = None
 
 
 class Chunk(BaseModel):
@@ -164,6 +169,7 @@ class Chunk(BaseModel):
 class Entity(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid4()))
     workspace_id: str
+    document_id: str | None = None
     name: str
     type: EntityType | str = EntityType.CONCEPT
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -173,6 +179,7 @@ class Entity(BaseModel):
 class Relationship(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid4()))
     workspace_id: str
+    document_id: str | None = None
     subject: str
     predicate: str
     object: str
@@ -208,3 +215,28 @@ class SearchResponse(BaseModel):
     related_entities: list[Entity] = Field(default_factory=list)
     relationships: list[Relationship] = Field(default_factory=list)
     security: ContentSecurity | None = None
+
+
+class TombstoneDocumentRequest(StrictModel):
+    workspace_id: str = Field(min_length=1, max_length=128, pattern=r"^[a-zA-Z0-9_.:-]+$")
+    reason: str = Field(min_length=1, max_length=1000)
+
+
+class TombstoneDocumentResponse(BaseModel):
+    document_id: str
+    workspace_id: str
+    deleted_at: datetime
+    purge_after: datetime
+    reason: str
+
+
+class RetentionRunRequest(StrictModel):
+    workspace_id: str = Field(min_length=1, max_length=128, pattern=r"^[a-zA-Z0-9_.:-]+$")
+    as_of: datetime | None = None
+
+
+class RetentionRunResponse(BaseModel):
+    workspace_id: str
+    as_of: datetime
+    tombstoned: int
+    purged: int
