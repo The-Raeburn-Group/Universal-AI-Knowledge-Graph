@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, cast
 
 from pgvector.sqlalchemy import Vector  # type: ignore[import-untyped]
@@ -13,9 +13,11 @@ from sqlalchemy import (
     String,
     Table,
     Text,
+    delete,
     or_,
     select,
     text,
+    update,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -30,10 +32,11 @@ from universal_kg.domain import (
     Entity,
     Relationship,
     SearchHit,
+    TombstoneDocumentResponse,
 )
 
 DATABASE_EMBEDDING_DIMENSIONS = 384
-EXPECTED_ALEMBIC_REVISION = "20260908_0002"
+EXPECTED_ALEMBIC_REVISION = "20260909_0003"
 
 
 def _policy_json(policy: AccessPolicy) -> dict[str, Any]:
@@ -64,10 +67,15 @@ class DocumentRecord(Base):
     metadata_json: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, nullable=False)
     access_json: Mapped[dict[str, Any]] = mapped_column("access", JSONB, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    retention_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    purge_after: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    deletion_reason: Mapped[str | None] = mapped_column(Text)
 
     __table_args__ = (
         Index("documents_workspace_source_external_idx", "workspace_id", "source", "external_id"),
         Index("documents_access_gin_idx", "access", postgresql_using="gin"),
+        Index("documents_workspace_retention_idx", "workspace_id", "retention_until"),
     )
 
 
@@ -102,6 +110,11 @@ class EntityRecord(Base):
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)
     workspace_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    document_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("documents.id", ondelete="CASCADE"),
+        index=True,
+    )
     name: Mapped[str] = mapped_column(String(512), nullable=False)
     type: Mapped[str] = mapped_column(String(64), nullable=False)
     metadata_json: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, nullable=False)
@@ -118,6 +131,11 @@ class RelationshipRecord(Base):
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)
     workspace_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    document_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey("documents.id", ondelete="CASCADE"),
+        index=True,
+    )
     subject: Mapped[str] = mapped_column(String(512), nullable=False)
     predicate: Mapped[str] = mapped_column(String(256), nullable=False)
     object_name: Mapped[str] = mapped_column("object", String(512), nullable=False)
@@ -159,6 +177,10 @@ class PostgresKnowledgeStore:
             metadata=document.metadata,
             access=_policy_json(document.access),
             created_at=document.created_at,
+            retention_until=document.retention_until,
+            deleted_at=document.deleted_at,
+            purge_after=document.purge_after,
+            deletion_reason=document.deletion_reason,
         )
         statement = statement.on_conflict_do_update(
             index_elements=[table.c.id],
@@ -171,6 +193,10 @@ class PostgresKnowledgeStore:
                 "metadata": statement.excluded.metadata,
                 "access": statement.excluded.access,
                 "created_at": statement.excluded.created_at,
+                "retention_until": statement.excluded.retention_until,
+                "deleted_at": statement.excluded.deleted_at,
+                "purge_after": statement.excluded.purge_after,
+                "deletion_reason": statement.excluded.deletion_reason,
             },
         )
         async with self._sessions() as session:
@@ -230,6 +256,7 @@ class PostgresKnowledgeStore:
                     {
                         "id": entity.id,
                         "workspace_id": entity.workspace_id,
+                        "document_id": entity.document_id,
                         "name": entity.name,
                         "type": str(entity.type),
                         "metadata": entity.metadata,
@@ -243,6 +270,7 @@ class PostgresKnowledgeStore:
                     index_elements=[table.c.id],
                     set_={
                         "workspace_id": entity_statement.excluded.workspace_id,
+                        "document_id": entity_statement.excluded.document_id,
                         "name": entity_statement.excluded.name,
                         "type": entity_statement.excluded.type,
                         "metadata": entity_statement.excluded.metadata,
@@ -256,6 +284,7 @@ class PostgresKnowledgeStore:
                     {
                         "id": relationship.id,
                         "workspace_id": relationship.workspace_id,
+                        "document_id": relationship.document_id,
                         "subject": relationship.subject,
                         "predicate": relationship.predicate,
                         "object": relationship.object,
@@ -272,6 +301,7 @@ class PostgresKnowledgeStore:
                     index_elements=[table.c.id],
                     set_={
                         "workspace_id": relationship_statement.excluded.workspace_id,
+                        "document_id": relationship_statement.excluded.document_id,
                         "subject": relationship_statement.excluded.subject,
                         "predicate": relationship_statement.excluded.predicate,
                         "object": relationship_statement.excluded.object,
@@ -303,6 +333,7 @@ class PostgresKnowledgeStore:
             .where(
                 ChunkRecord.workspace_id == workspace_id,
                 DocumentRecord.workspace_id == workspace_id,
+                DocumentRecord.deleted_at.is_(None),
                 _access_filter(DocumentRecord.access_json, access),
                 _access_filter(ChunkRecord.access_json, access),
             )
@@ -341,8 +372,11 @@ class PostgresKnowledgeStore:
         entity_conditions = [EntityRecord.name.ilike(f"%{token}%") for token in tokens]
         entity_statement = (
             select(EntityRecord)
+            .join(DocumentRecord, DocumentRecord.id == EntityRecord.document_id)
             .where(
                 EntityRecord.workspace_id == workspace_id,
+                DocumentRecord.workspace_id == workspace_id,
+                DocumentRecord.deleted_at.is_(None),
                 _access_filter(EntityRecord.access_json, access),
                 or_(*entity_conditions),
             )
@@ -356,8 +390,11 @@ class PostgresKnowledgeStore:
             if names:
                 relationship_statement = (
                     select(RelationshipRecord)
+                    .join(DocumentRecord, DocumentRecord.id == RelationshipRecord.document_id)
                     .where(
                         RelationshipRecord.workspace_id == workspace_id,
+                        DocumentRecord.workspace_id == workspace_id,
+                        DocumentRecord.deleted_at.is_(None),
                         _access_filter(RelationshipRecord.access_json, access),
                         or_(
                             RelationshipRecord.subject.in_(names),
@@ -372,6 +409,7 @@ class PostgresKnowledgeStore:
             Entity(
                 id=row.id,
                 workspace_id=row.workspace_id,
+                document_id=row.document_id,
                 name=row.name,
                 type=row.type,
                 metadata=row.metadata_json,
@@ -383,6 +421,7 @@ class PostgresKnowledgeStore:
             Relationship(
                 id=row.id,
                 workspace_id=row.workspace_id,
+                document_id=row.document_id,
                 subject=row.subject,
                 predicate=row.predicate,
                 object=row.object_name,
@@ -394,6 +433,79 @@ class PostgresKnowledgeStore:
             for row in relationship_rows
         ]
         return entities, relationships
+
+    async def tombstone_document(
+        self,
+        workspace_id: str,
+        document_id: str,
+        reason: str,
+        deleted_at: datetime,
+        purge_after: datetime,
+    ) -> TombstoneDocumentResponse | None:
+        async with self._sessions() as session:
+            async with session.begin():
+                statement = (
+                    select(DocumentRecord)
+                    .where(
+                        DocumentRecord.workspace_id == workspace_id,
+                        DocumentRecord.id == document_id,
+                    )
+                    .with_for_update()
+                )
+                document = (await session.scalars(statement)).one_or_none()
+                if document is None:
+                    return None
+                if document.deleted_at is None:
+                    document.deleted_at = deleted_at
+                    document.purge_after = purge_after
+                    document.deletion_reason = reason
+                return TombstoneDocumentResponse(
+                    document_id=document.id,
+                    workspace_id=document.workspace_id,
+                    deleted_at=document.deleted_at or deleted_at,
+                    purge_after=document.purge_after or purge_after,
+                    reason=document.deletion_reason or reason,
+                )
+
+    async def run_retention(
+        self,
+        workspace_id: str,
+        as_of: datetime,
+        purge_grace_days: int,
+    ) -> tuple[int, int]:
+        async with self._sessions() as session:
+            async with session.begin():
+                expired_statement = select(DocumentRecord.id).where(
+                    DocumentRecord.workspace_id == workspace_id,
+                    DocumentRecord.deleted_at.is_(None),
+                    DocumentRecord.retention_until.is_not(None),
+                    DocumentRecord.retention_until <= as_of,
+                )
+                expired_ids = list((await session.scalars(expired_statement)).all())
+                if expired_ids:
+                    await session.execute(
+                        update(DocumentRecord)
+                        .where(DocumentRecord.id.in_(expired_ids))
+                        .values(
+                            deleted_at=as_of,
+                            purge_after=as_of + timedelta(days=purge_grace_days),
+                            deletion_reason="retention_expired",
+                        )
+                    )
+
+                purge_statement = select(DocumentRecord.id).where(
+                    DocumentRecord.workspace_id == workspace_id,
+                    DocumentRecord.deleted_at.is_not(None),
+                    DocumentRecord.purge_after.is_not(None),
+                    DocumentRecord.purge_after <= as_of,
+                )
+                purge_ids = list((await session.scalars(purge_statement)).all())
+                if purge_ids:
+                    await session.execute(
+                        delete(DocumentRecord).where(DocumentRecord.id.in_(purge_ids))
+                    )
+
+        return len(expired_ids), len(purge_ids)
 
     async def check_ready(self) -> None:
         async with self._engine.connect() as connection:
