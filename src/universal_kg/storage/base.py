@@ -12,6 +12,7 @@ from universal_kg.domain import (
     SearchHit,
     TombstoneDocumentResponse,
 )
+from universal_kg.recovery import DeletionLedgerEntry
 
 
 class KnowledgeStore(Protocol):
@@ -52,6 +53,15 @@ class KnowledgeStore(Protocol):
         workspace_id: str,
         as_of: datetime,
         purge_grace_days: int,
+    ) -> tuple[int, int]: ...
+
+    async def deletion_ledger(self, workspace_id: str) -> list[DeletionLedgerEntry]: ...
+
+    async def replay_deletion_ledger(
+        self,
+        workspace_id: str,
+        entries: list[DeletionLedgerEntry],
+        as_of: datetime,
     ) -> tuple[int, int]: ...
 
     async def check_ready(self) -> None: ...
