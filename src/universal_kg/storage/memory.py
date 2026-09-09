@@ -2,9 +2,18 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 
 from universal_kg.access import access_allows
-from universal_kg.domain import AccessContext, Chunk, Document, Entity, Relationship, SearchHit
+from universal_kg.domain import (
+    AccessContext,
+    Chunk,
+    Document,
+    Entity,
+    Relationship,
+    SearchHit,
+    TombstoneDocumentResponse,
+)
 
 
 def cosine(a: list[float], b: list[float]) -> float:
@@ -35,6 +44,16 @@ class MemoryKnowledgeStore:
         self.entities.extend(entities)
         self.relationships.extend(relationships)
 
+    def _is_active_document(self, document_id: str | None, workspace_id: str) -> bool:
+        if not document_id:
+            return False
+        document = self.documents.get(document_id)
+        return bool(
+            document
+            and document.workspace_id == workspace_id
+            and document.deleted_at is None
+        )
+
     async def search(
         self,
         workspace_id: str,
@@ -46,7 +65,9 @@ class MemoryKnowledgeStore:
         for chunk_id, chunk in self.chunks.items():
             if chunk.workspace_id != workspace_id:
                 continue
-            document = self.documents[chunk.document_id]
+            document = self.documents.get(chunk.document_id)
+            if not document or document.deleted_at is not None:
+                continue
             if not access_allows(document.access, access) or not access_allows(
                 chunk.access, access
             ):
@@ -80,6 +101,7 @@ class MemoryKnowledgeStore:
             entity
             for entity in self.entities
             if entity.workspace_id == workspace_id
+            and self._is_active_document(entity.document_id, workspace_id)
             and access_allows(entity.access, access)
             and any(token in entity.name.lower() for token in tokens)
         ][:20]
@@ -88,10 +110,83 @@ class MemoryKnowledgeStore:
             rel
             for rel in self.relationships
             if rel.workspace_id == workspace_id
+            and self._is_active_document(rel.document_id, workspace_id)
             and access_allows(rel.access, access)
             and (rel.subject in names or rel.object in names)
         ][:50]
         return entities, relationships
+
+    async def tombstone_document(
+        self,
+        workspace_id: str,
+        document_id: str,
+        reason: str,
+        deleted_at: datetime,
+        purge_after: datetime,
+    ) -> TombstoneDocumentResponse | None:
+        document = self.documents.get(document_id)
+        if not document or document.workspace_id != workspace_id:
+            return None
+        if document.deleted_at is None:
+            document.deleted_at = deleted_at
+            document.purge_after = purge_after
+            document.deletion_reason = reason
+        return TombstoneDocumentResponse(
+            document_id=document.id,
+            workspace_id=document.workspace_id,
+            deleted_at=document.deleted_at or deleted_at,
+            purge_after=document.purge_after or purge_after,
+            reason=document.deletion_reason or reason,
+        )
+
+    async def run_retention(
+        self,
+        workspace_id: str,
+        as_of: datetime,
+        purge_grace_days: int,
+    ) -> tuple[int, int]:
+        tombstoned = 0
+        for document in self.documents.values():
+            if (
+                document.workspace_id == workspace_id
+                and document.deleted_at is None
+                and document.retention_until is not None
+                and document.retention_until <= as_of
+            ):
+                document.deleted_at = as_of
+                document.purge_after = as_of + timedelta(days=purge_grace_days)
+                document.deletion_reason = "retention_expired"
+                tombstoned += 1
+
+        purge_ids = {
+            document.id
+            for document in self.documents.values()
+            if document.workspace_id == workspace_id
+            and document.deleted_at is not None
+            and document.purge_after is not None
+            and document.purge_after <= as_of
+        }
+        if purge_ids:
+            chunk_ids = {
+                chunk_id
+                for chunk_id, chunk in self.chunks.items()
+                if chunk.document_id in purge_ids
+            }
+            for document_id in purge_ids:
+                self.documents.pop(document_id, None)
+            for chunk_id in chunk_ids:
+                self.chunks.pop(chunk_id, None)
+                self.vectors.pop(chunk_id, None)
+            self.entities = [
+                entity for entity in self.entities if entity.document_id not in purge_ids
+            ]
+            self.relationships = [
+                relationship
+                for relationship in self.relationships
+                if relationship.document_id not in purge_ids
+            ]
+
+        return tombstoned, len(purge_ids)
 
     async def check_ready(self) -> None:
         return None

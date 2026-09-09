@@ -1,8 +1,17 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Protocol
 
-from universal_kg.domain import AccessContext, Chunk, Document, Entity, Relationship, SearchHit
+from universal_kg.domain import (
+    AccessContext,
+    Chunk,
+    Document,
+    Entity,
+    Relationship,
+    SearchHit,
+    TombstoneDocumentResponse,
+)
 
 
 class KnowledgeStore(Protocol):
@@ -28,6 +37,22 @@ class KnowledgeStore(Protocol):
         query: str,
         access: AccessContext,
     ) -> tuple[list[Entity], list[Relationship]]: ...
+
+    async def tombstone_document(
+        self,
+        workspace_id: str,
+        document_id: str,
+        reason: str,
+        deleted_at: datetime,
+        purge_after: datetime,
+    ) -> TombstoneDocumentResponse | None: ...
+
+    async def run_retention(
+        self,
+        workspace_id: str,
+        as_of: datetime,
+        purge_grace_days: int,
+    ) -> tuple[int, int]: ...
 
     async def check_ready(self) -> None: ...
 

@@ -11,6 +11,7 @@ _CAPITALISED = re.compile(r"\b[A-Z][A-Za-z0-9&._-]*(?:\s+[A-Z][A-Za-z0-9&._-]*){
 def extract_entities(chunks: list[Chunk]) -> list[Entity]:
     counts: Counter[str] = Counter()
     workspace_id = chunks[0].workspace_id if chunks else "default"
+    document_id = chunks[0].document_id if chunks else None
     access = chunks[0].access if chunks else AccessPolicy()
     for chunk in chunks:
         for match in _CAPITALISED.findall(chunk.text):
@@ -21,6 +22,7 @@ def extract_entities(chunks: list[Chunk]) -> list[Entity]:
     return [
         Entity(
             workspace_id=workspace_id,
+            document_id=document_id,
             name=name,
             type="concept",
             metadata={"mentions": count},
@@ -39,6 +41,7 @@ def extract_relationships(chunks: list[Chunk], entities: list[Entity]) -> list[R
             relationships.append(
                 Relationship(
                     workspace_id=chunk.workspace_id,
+                    document_id=chunk.document_id,
                     subject=left,
                     predicate="co_occurs_with",
                     object=right,

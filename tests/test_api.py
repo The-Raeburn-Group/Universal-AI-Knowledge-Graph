@@ -143,3 +143,66 @@ def test_rejects_invalid_workspace() -> None:
         json={"workspace_id": "bad workspace", "query": "test", "limit": 5},
     )
     assert response.status_code == 422
+
+
+def test_document_tombstone_requires_admin_and_hides_retrieval() -> None:
+    client = TestClient(app)
+    workspace = "e2e-lifecycle"
+    viewer_headers = delegated_headers(workspace, "viewer@example.com", roles="viewer")
+    admin_headers = delegated_headers(workspace, "admin@example.com", roles="kg.admin")
+
+    ingest_response = client.post(
+        "/v1/ingest",
+        headers=admin_headers,
+        json={
+            "workspace_id": workspace,
+            "source": "manual",
+            "title": "Lifecycle source",
+            "body": "Project TombstoneMarker must disappear from retrieval.",
+            "retention_days": 30,
+        },
+    )
+    assert ingest_response.status_code == 200
+    document_id = ingest_response.json()["id"]
+    assert ingest_response.json()["retention_until"]
+
+    forbidden = client.post(
+        f"/v1/documents/{document_id}/tombstone",
+        headers=viewer_headers,
+        json={"workspace_id": workspace, "reason": "viewer must not delete"},
+    )
+    assert forbidden.status_code == 403
+
+    mismatch = client.post(
+        f"/v1/documents/{document_id}/tombstone",
+        headers=delegated_headers("different-workspace", roles="kg.admin"),
+        json={"workspace_id": workspace, "reason": "wrong workspace"},
+    )
+    assert mismatch.status_code == 403
+
+    tombstone = client.post(
+        f"/v1/documents/{document_id}/tombstone",
+        headers=admin_headers,
+        json={"workspace_id": workspace, "reason": "source_deleted"},
+    )
+    assert tombstone.status_code == 200
+    assert tombstone.json()["document_id"] == document_id
+    assert tombstone.json()["reason"] == "source_deleted"
+    assert tombstone.json()["deleted_at"]
+    assert tombstone.json()["purge_after"]
+
+    hidden = client.post(
+        "/v1/search",
+        headers=viewer_headers,
+        json={"workspace_id": workspace, "query": "TombstoneMarker", "limit": 10},
+    )
+    assert hidden.status_code == 200
+    assert hidden.json()["hits"] == []
+    assert hidden.json()["related_entities"] == []
+
+    retention_forbidden = client.post(
+        "/v1/retention/run",
+        headers=viewer_headers,
+        json={"workspace_id": workspace},
+    )
+    assert retention_forbidden.status_code == 403
