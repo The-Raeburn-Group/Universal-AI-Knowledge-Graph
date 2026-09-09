@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     openai_api_key: str | None = None
     max_chunk_chars: int = 1600
     chunk_overlap_chars: int = 200
+    retention_purge_grace_days: int = Field(default=30, ge=0, le=3650)
     log_level: str = "INFO"
 
     @model_validator(mode="after")
