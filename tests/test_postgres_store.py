@@ -8,6 +8,7 @@ import pytest
 from universal_kg.domain import AccessContext, AccessPolicy, DocumentIn, SearchRequest
 from universal_kg.processing.embeddings import LocalHashEmbeddingProvider
 from universal_kg.services.ingestion import IngestionService
+from universal_kg.services.lifecycle import LifecycleService
 from universal_kg.services.search import SearchService
 from universal_kg.storage.postgres import PostgresKnowledgeStore
 
@@ -118,3 +119,61 @@ async def test_postgres_ingestion_survives_restart_and_enforces_workspace_and_ac
         )
     finally:
         await reopened_store.close()
+
+
+@pytest.mark.asyncio
+async def test_postgres_tombstone_hides_vector_and_graph_then_cascade_purges() -> None:
+    database_url = os.environ.get("UKG_DATABASE_URL")
+    if not database_url:
+        pytest.skip("UKG_DATABASE_URL is required for PostgreSQL integration test")
+
+    embeddings = LocalHashEmbeddingProvider(dimensions=384)
+    workspace = f"postgres-lifecycle-{uuid4()}"
+    store = PostgresKnowledgeStore(database_url, embedding_dimensions=384)
+    try:
+        await store.check_ready()
+        ingestion = IngestionService(store, embeddings)
+        search = SearchService(store, embeddings)
+        lifecycle = LifecycleService(store, purge_grace_days=0)
+        access = AccessContext(workspace_id=workspace, principal_id="admin@example.com")
+
+        document = await ingestion.ingest(
+            DocumentIn(
+                workspace_id=workspace,
+                source="manual",
+                title="Postgres lifecycle source",
+                body="Project DurableTombstone requires Security Review and Board Approval.",
+            )
+        )
+        before = await search.search(
+            SearchRequest(
+                workspace_id=workspace,
+                query="DurableTombstone Security Board",
+                limit=10,
+            ),
+            access,
+        )
+        assert document.id in {hit.document_id for hit in before.hits}
+        assert before.related_entities
+
+        tombstone = await lifecycle.tombstone(workspace, document.id, "source_deleted")
+        assert tombstone is not None
+
+        hidden = await search.search(
+            SearchRequest(
+                workspace_id=workspace,
+                query="DurableTombstone Security Board",
+                limit=10,
+            ),
+            access,
+        )
+        assert document.id not in {hit.document_id for hit in hidden.hits}
+        assert hidden.related_entities == []
+        assert hidden.relationships == []
+
+        retention = await lifecycle.run_retention(workspace, as_of=tombstone.purge_after)
+        assert retention.tombstoned == 0
+        assert retention.purged == 1
+        assert await lifecycle.tombstone(workspace, document.id, "already_purged") is None
+    finally:
+        await store.close()
