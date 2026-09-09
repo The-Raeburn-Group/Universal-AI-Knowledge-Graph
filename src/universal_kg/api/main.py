@@ -11,10 +11,21 @@ from fastapi.responses import ORJSONResponse
 
 from universal_kg.access import AccessDeniedError, ensure_workspace_access
 from universal_kg.config import Settings, get_settings
-from universal_kg.domain import AccessContext, Document, DocumentIn, SearchRequest, SearchResponse
+from universal_kg.domain import (
+    AccessContext,
+    Document,
+    DocumentIn,
+    RetentionRunRequest,
+    RetentionRunResponse,
+    SearchRequest,
+    SearchResponse,
+    TombstoneDocumentRequest,
+    TombstoneDocumentResponse,
+)
 from universal_kg.logging import configure_logging, get_logger
 from universal_kg.security import audit_event, client_key, rate_limiter
 from universal_kg.services.ingestion import IngestionService
+from universal_kg.services.lifecycle import LifecycleService
 from universal_kg.services.search import SearchService
 from universal_kg.storage.factory import get_knowledge_store
 
@@ -52,11 +63,21 @@ ActorHeader = Annotated[str | None, Header(alias="X-Actor-ID")]
 ActorRolesHeader = Annotated[str | None, Header(alias="X-Actor-Roles")]
 ActorGroupsHeader = Annotated[str | None, Header(alias="X-Actor-Groups")]
 
+_LIFECYCLE_ADMIN_ROLES = frozenset({"admin", "kg.admin", "data.admin"})
+
 
 def _split_header_values(value: str | None) -> list[str]:
     if not value:
         return []
     return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _require_lifecycle_admin(access: AccessContext) -> None:
+    if not _LIFECYCLE_ADMIN_ROLES.intersection(access.roles):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Knowledge lifecycle administrator role is required",
+        )
 
 
 async def require_api_key(
@@ -155,6 +176,7 @@ async def ingest(payload: DocumentIn, access: DelegatedAccess) -> Document:
             "actor_id": access.principal_id,
             "access_visibility": payload.access.visibility,
             "source_acl_ref": payload.access.source_acl_ref,
+            "retention_days": payload.retention_days,
         },
     )
     return await IngestionService().ingest(payload)
@@ -176,3 +198,75 @@ async def search(payload: SearchRequest, access: DelegatedAccess) -> SearchRespo
         return await SearchService().search(payload, access)
     except AccessDeniedError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+
+
+@app.post(
+    "/v1/documents/{document_id}/tombstone",
+    response_model=TombstoneDocumentResponse,
+    dependencies=[Depends(require_api_key)],
+)
+async def tombstone_document(
+    document_id: str,
+    payload: TombstoneDocumentRequest,
+    access: DelegatedAccess,
+) -> TombstoneDocumentResponse:
+    try:
+        ensure_workspace_access(payload.workspace_id, access)
+    except AccessDeniedError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    _require_lifecycle_admin(access)
+    result = await LifecycleService().tombstone(
+        payload.workspace_id,
+        document_id,
+        payload.reason,
+    )
+    if result is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+    audit_event(
+        "document.tombstone",
+        workspace_id=payload.workspace_id,
+        metadata={
+            "document_id": document_id,
+            "actor_id": access.principal_id,
+            "reason": payload.reason,
+            "purge_after": result.purge_after.isoformat(),
+        },
+    )
+    return result
+
+
+@app.post(
+    "/v1/retention/run",
+    response_model=RetentionRunResponse,
+    dependencies=[Depends(require_api_key)],
+)
+async def run_retention(
+    payload: RetentionRunRequest,
+    access: DelegatedAccess,
+) -> RetentionRunResponse:
+    try:
+        ensure_workspace_access(payload.workspace_id, access)
+    except AccessDeniedError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    _require_lifecycle_admin(access)
+    try:
+        result = await LifecycleService().run_retention(
+            payload.workspace_id,
+            as_of=payload.as_of,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+    audit_event(
+        "retention.run",
+        workspace_id=payload.workspace_id,
+        metadata={
+            "actor_id": access.principal_id,
+            "as_of": result.as_of.isoformat(),
+            "tombstoned": result.tombstoned,
+            "purged": result.purged,
+        },
+    )
+    return result
