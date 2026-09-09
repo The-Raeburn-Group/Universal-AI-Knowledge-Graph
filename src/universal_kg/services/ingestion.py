@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 from universal_kg.domain import Document, DocumentIn
 from universal_kg.processing.chunking import chunk_document
 from universal_kg.processing.embeddings import EmbeddingProvider, get_embedding_provider
@@ -18,9 +20,17 @@ class IngestionService:
         self.embedding_provider = embedding_provider or get_embedding_provider()
 
     async def ingest(self, payload: DocumentIn) -> Document:
+        created_at = datetime.now(UTC)
+        retention_until = (
+            created_at + timedelta(days=payload.retention_days)
+            if payload.retention_days is not None
+            else None
+        )
         document = Document(
-            **payload.model_dump(exclude={"access"}),
+            **payload.model_dump(exclude={"access", "retention_days"}),
             access=payload.access,
+            created_at=created_at,
+            retention_until=retention_until,
         )
         chunks = chunk_document(document)
         vectors = (
