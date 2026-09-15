@@ -1,4 +1,7 @@
-.PHONY: install lint format typecheck test build docker-build run db-migrate db-current
+.PHONY: install lint format typecheck test build docker-build run db-migrate db-current db-backup db-restore db-verify-restore
+
+BACKUP_FILE ?= build/backups/ukg.dump
+BACKUP_MANIFEST ?= build/backups/ukg.manifest.json
 
 install:
 	python -m pip install --upgrade pip
@@ -29,6 +32,15 @@ db-migrate:
 
 db-current:
 	alembic current
+
+db-backup:
+	python scripts/postgres_dr.py backup --dump "$(BACKUP_FILE)" --manifest "$(BACKUP_MANIFEST)"
+
+db-restore:
+	python scripts/postgres_dr.py restore --dump "$(BACKUP_FILE)" --manifest "$(BACKUP_MANIFEST)" --allow-destructive-restore
+
+db-verify-restore:
+	python scripts/postgres_dr.py verify --dump "$(BACKUP_FILE)" --manifest "$(BACKUP_MANIFEST)"
 
 run:
 	uvicorn universal_kg.api.main:app --reload
