@@ -134,15 +134,15 @@ def _run_pg_tool(tool: str, database_url: str, extra_args: Sequence[str]) -> Non
 
 
 def _canonical(value: Any) -> Any:
-    if isinstance(value, (datetime, date)):
+    if isinstance(value, datetime | date):
         return value.isoformat()
     if isinstance(value, dict):
         return {str(key): _canonical(item) for key, item in sorted(value.items())}
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, list | tuple):
         return [_canonical(item) for item in value]
     if isinstance(value, bytes):
         return value.hex()
-    if value is None or isinstance(value, (str, int, float, bool)):
+    if value is None or isinstance(value, str | int | float | bool):
         return value
     return str(value)
 
