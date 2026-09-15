@@ -10,7 +10,6 @@ from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 
 import psycopg
-
 from postgres_dr import normalise_database_url
 
 WORKSPACE_ID = "dr-workspace"
