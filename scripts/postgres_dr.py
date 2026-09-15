@@ -82,6 +82,13 @@ def normalise_database_url(database_url: str) -> str:
     raise ValueError("Only PostgreSQL database URLs are supported for backup/restore.")
 
 
+def _resolve_database_url(explicit: str | None, env_name: str) -> str:
+    database_url = explicit or os.getenv(env_name)
+    if not database_url:
+        raise RuntimeError(f"Provide --database-url or set {env_name}.")
+    return database_url
+
+
 def _libpq_target(database_url: str) -> tuple[list[str], dict[str, str]]:
     parsed = urlparse(normalise_database_url(database_url))
     database = unquote(parsed.path.lstrip("/"))
@@ -275,12 +282,12 @@ def _parser() -> argparse.ArgumentParser:
 
     for command in ("backup", "verify"):
         child = subparsers.add_parser(command)
-        child.add_argument("--database-url", required=True)
+        child.add_argument("--database-url")
         child.add_argument("--dump", required=True, type=Path)
         child.add_argument("--manifest", required=True, type=Path)
 
     restore = subparsers.add_parser("restore")
-    restore.add_argument("--database-url", required=True)
+    restore.add_argument("--database-url")
     restore.add_argument("--dump", required=True, type=Path)
     restore.add_argument("--manifest", required=True, type=Path)
     restore.add_argument("--allow-destructive-restore", action="store_true")
@@ -289,17 +296,19 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    env_name = "UKG_RESTORE_DATABASE_URL" if args.command == "restore" else "UKG_DATABASE_URL"
+    database_url = _resolve_database_url(args.database_url, env_name)
     if args.command == "backup":
-        create_backup(args.database_url, args.dump, args.manifest)
+        create_backup(database_url, args.dump, args.manifest)
     elif args.command == "restore":
         restore_backup(
-            args.database_url,
+            database_url,
             args.dump,
             args.manifest,
             allow_destructive_restore=args.allow_destructive_restore,
         )
     elif args.command == "verify":
-        verify_restore(args.database_url, args.dump, args.manifest)
+        verify_restore(database_url, args.dump, args.manifest)
     else:  # pragma: no cover - argparse enforces the command choices.
         raise RuntimeError(f"Unknown command: {args.command}")
     return 0
