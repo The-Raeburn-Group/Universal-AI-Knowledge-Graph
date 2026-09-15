@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 
@@ -141,13 +142,16 @@ def seed(database_url: str) -> None:
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--database-url", required=True)
+    parser.add_argument("--database-url")
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    seed(args.database_url)
+    database_url = args.database_url or os.getenv("UKG_DATABASE_URL")
+    if not database_url:
+        raise RuntimeError("Provide --database-url or set UKG_DATABASE_URL.")
+    seed(database_url)
     return 0
 
 
