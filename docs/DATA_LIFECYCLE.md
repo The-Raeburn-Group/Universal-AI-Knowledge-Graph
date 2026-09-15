@@ -63,4 +63,6 @@ The API emits audit events for explicit tombstones and retention runs, including
 
 ## Backups and recovery
 
-This lifecycle does not claim immediate erasure from historical backups. Production backup retention, restore rehearsal, purge propagation into backup policy, legal holds and documented RPO/RTO remain separate production-readiness work. A restore process must not silently re-expose records whose tombstone/purge state is newer than the restored snapshot.
+The repository now includes a manifest-verified PostgreSQL logical backup/restore drill; see [BACKUP_AND_RECOVERY.md](BACKUP_AND_RECOVERY.md). The automated drill proves that ACLs, vectors, graph provenance and tombstone state present at backup time survive an isolated restore and that the restored database remains at a valid Alembic head.
+
+This still does not claim immediate erasure from historical backups or complete production disaster recovery. Production backup retention, managed point-in-time recovery, post-restore tombstone/deletion replay, legal holds, measured RPO/RTO and integrated platform recovery remain separate production-readiness gates. A restore process must not silently re-expose records whose tombstone/purge state is newer than the restored snapshot.

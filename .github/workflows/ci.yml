@@ -58,6 +58,7 @@ jobs:
     env:
       UKG_STORAGE_BACKEND: postgres
       UKG_DATABASE_URL: postgresql+psycopg://ukg:ukg@localhost:5432/ukg
+      UKG_RESTORE_DATABASE_URL: postgresql+psycopg://ukg:ukg@localhost:5432/ukg_restore
       UKG_EMBEDDING_PROVIDER: local-hash
       UKG_EMBEDDING_DIMENSIONS: "384"
     steps:
@@ -73,6 +74,13 @@ jobs:
       - name: Install
         run: make install
 
+      - name: Install PostgreSQL client tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+          pg_dump --version
+          pg_restore --version
+
       - name: Apply migrations to fresh pgvector database
         run: make db-migrate
 
@@ -84,6 +92,33 @@ jobs:
 
       - name: Verify API and persistent workspace isolation
         run: pytest -q tests/test_api.py tests/test_postgres_store.py --no-cov
+
+      - name: Seed backup and restore fixture
+        run: python scripts/seed_dr_fixture.py
+
+      - name: Create manifest-verified logical backup
+        run: make db-backup
+
+      - name: Create isolated restore database
+        env:
+          PGPASSWORD: ukg
+        run: createdb --host localhost --port 5432 --username ukg ukg_restore
+
+      - name: Restore into isolated database
+        run: make db-restore
+
+      - name: Verify restored schema is current and forward-fix safe
+        env:
+          UKG_DATABASE_URL: ${{ env.UKG_RESTORE_DATABASE_URL }}
+        run: |
+          make db-current
+          make db-migrate
+          make db-current
+
+      - name: Verify restored data, ACLs and lifecycle state against backup manifest
+        env:
+          UKG_DATABASE_URL: ${{ env.UKG_RESTORE_DATABASE_URL }}
+        run: make db-verify-restore
 
   docker:
     runs-on: ubuntu-latest
