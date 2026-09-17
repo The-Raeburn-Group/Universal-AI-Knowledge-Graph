@@ -37,7 +37,10 @@ async def _seed_workspace(database_url: str, workspace_id: str, suffix: str) -> 
                 text(
                     """
                     insert into documents (id, workspace_id, source, external_id, title, body)
-                    values (:document_id, :workspace_id, 'privacy-test', :external_id, :title, :body)
+                    values (
+                        :document_id, :workspace_id, 'privacy-test',
+                        :external_id, :title, :body
+                    )
                     """
                 ),
                 {
@@ -52,7 +55,10 @@ async def _seed_workspace(database_url: str, workspace_id: str, suffix: str) -> 
                 text(
                     """
                     insert into chunks (id, document_id, workspace_id, text, ordinal, embedding)
-                    values (:chunk_id, :document_id, :workspace_id, :text, 0, cast(:embedding as vector))
+                    values (
+                        :chunk_id, :document_id, :workspace_id,
+                        :text, 0, cast(:embedding as vector)
+                    )
                     """
                 ),
                 {
