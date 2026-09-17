@@ -117,6 +117,8 @@ class CitationProvenance(BaseModel):
     chunk_id: str
     source_uri: str | None = Field(default=None, max_length=2048)
     source_version: str | None = Field(default=None, max_length=512)
+    page_start: int | None = Field(default=None, ge=1)
+    page_end: int | None = Field(default=None, ge=1)
     retrieved_at: datetime
     content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
