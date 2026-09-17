@@ -90,8 +90,8 @@ jobs:
       - name: Verify migration head
         run: make db-current
 
-      - name: Verify API and persistent workspace isolation
-        run: pytest -q tests/test_api.py tests/test_postgres_store.py --no-cov
+      - name: Verify API, persistent workspace isolation and DSAR erasure isolation
+        run: pytest -q tests/test_api.py tests/test_postgres_store.py tests/test_postgres_privacy.py --no-cov
 
       - name: Seed backup and restore fixture
         run: python scripts/seed_dr_fixture.py
