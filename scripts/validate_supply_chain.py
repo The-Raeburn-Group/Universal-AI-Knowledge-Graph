@@ -36,8 +36,8 @@ def main() -> int:
 
     ci = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
     for control, marker in [
-        ("known-vulnerability dependency gate", "pip-audit"),
-        ("supply-chain policy validation", "validate_supply_chain.py"),
+        ("known-vulnerability dependency gate", "make audit"),
+        ("supply-chain policy validation", "make supply-chain"),
         ("deterministic image identity", "universal-ai-knowledge-graph:${{ github.sha }}"),
         ("High/Critical container scan", "aquasecurity/trivy-action@"),
     ]:
@@ -46,7 +46,7 @@ def main() -> int:
 
     release = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
     for control, marker in [
-        ("dependency vulnerability gate", "pip-audit"),
+        ("dependency vulnerability gate", "make audit"),
         ("container vulnerability gate", "aquasecurity/trivy-action@"),
         ("SBOM generation", "anchore/sbom-action@"),
         ("GitHub provenance/SBOM attestation", "actions/attest@"),
