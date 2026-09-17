@@ -74,7 +74,7 @@ def _copy_page_ocr_metadata(span: dict[str, Any], metadata: dict[str, Any]) -> N
     if isinstance(attempted, bool):
         metadata["page_ocr_attempted"] = attempted
     confidence = span.get("ocr_confidence")
-    if isinstance(confidence, (int, float)) and not isinstance(confidence, bool):
+    if isinstance(confidence, int | float) and not isinstance(confidence, bool):
         metadata["page_ocr_confidence"] = float(confidence)
     word_count = span.get("ocr_word_count")
     if isinstance(word_count, int) and not isinstance(word_count, bool) and word_count >= 0:
