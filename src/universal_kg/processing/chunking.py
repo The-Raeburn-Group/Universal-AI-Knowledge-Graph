@@ -36,7 +36,10 @@ def _pdf_page_spans(document: Document) -> list[dict[str, Any]]:
         page = raw_span.get("page")
         start = raw_span.get("start")
         end = raw_span.get("end")
-        if not all(isinstance(value, int) and not isinstance(value, bool) for value in (page, start, end)):
+        values = (page, start, end)
+        if not all(
+            isinstance(value, int) and not isinstance(value, bool) for value in values
+        ):
             return []
         if page < 1 or start < 0 or end < start or end > len(document.body):
             return []
