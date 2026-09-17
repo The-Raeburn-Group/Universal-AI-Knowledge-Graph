@@ -7,7 +7,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends build-essential curl \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        curl \
+        poppler-utils \
+        tesseract-ocr \
     && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml README.md ./
