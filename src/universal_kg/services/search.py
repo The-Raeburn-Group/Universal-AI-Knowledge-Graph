@@ -32,6 +32,13 @@ def _metadata_string(metadata: dict[str, object], key: str) -> str | None:
     return value or None
 
 
+def _metadata_positive_int(metadata: dict[str, object], key: str) -> int | None:
+    value = metadata.get(key)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        return None
+    return value
+
+
 def _hit_security_values(hit: SearchHit) -> list[str]:
     return [hit.title, hit.text, hit.source, *_metadata_values(hit.metadata)]
 
@@ -44,6 +51,8 @@ def _citation(hit: SearchHit, workspace_id: str, retrieved_at: datetime) -> Cita
         chunk_id=hit.chunk_id,
         source_uri=_metadata_string(hit.metadata, "source_uri"),
         source_version=_metadata_string(hit.metadata, "source_version"),
+        page_start=_metadata_positive_int(hit.metadata, "page_start"),
+        page_end=_metadata_positive_int(hit.metadata, "page_end"),
         retrieved_at=retrieved_at,
         content_sha256=sha256(hit.text.encode("utf-8")).hexdigest(),
     )
