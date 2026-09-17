@@ -117,52 +117,63 @@ class PostgresPrivacyRepository:
         configured_url = database_url or get_settings().database_url
         self._engine: AsyncEngine = create_async_engine(configured_url, pool_pre_ping=True)
 
-    async def _rows(self, statement: str, workspace_id: str) -> list[dict[str, Any]]:
-        async with self._engine.connect() as connection:
-            result = await connection.execute(text(statement), {"workspace_id": workspace_id})
-            return [dict(row) for row in result.mappings().all()]
+    async def _rows(
+        self,
+        connection: AsyncConnection,
+        statement: str,
+        workspace_id: str,
+    ) -> list[dict[str, Any]]:
+        result = await connection.execute(text(statement), {"workspace_id": workspace_id})
+        return [dict(row) for row in result.mappings().all()]
 
     async def export_workspace(self, workspace_id: str) -> dict[str, list[dict[str, Any]]]:
         workspace_id = validate_workspace_id(workspace_id)
-        documents = await self._rows(
-            """
-            select id, workspace_id, source, external_id, title, body, metadata, access,
-                   created_at, retention_until, deleted_at, purge_after, deletion_reason
-            from documents
-            where workspace_id = :workspace_id
-            order by id
-            """,
-            workspace_id,
-        )
-        chunks = await self._rows(
-            """
-            select id, document_id, workspace_id, text, ordinal, metadata, access,
-                   embedding::text as embedding
-            from chunks
-            where workspace_id = :workspace_id
-            order by id
-            """,
-            workspace_id,
-        )
-        entities = await self._rows(
-            """
-            select id, workspace_id, document_id, name, type, metadata, access
-            from entities
-            where workspace_id = :workspace_id
-            order by id
-            """,
-            workspace_id,
-        )
-        relationships = await self._rows(
-            """
-            select id, workspace_id, document_id, subject, predicate, object,
-                   evidence_chunk_id, confidence, metadata, access
-            from relationships
-            where workspace_id = :workspace_id
-            order by id
-            """,
-            workspace_id,
-        )
+        async with self._engine.begin() as connection:
+            # One transaction gives the export a coherent cross-table snapshot.
+            documents = await self._rows(
+                connection,
+                """
+                select id, workspace_id, source, external_id, title, body, metadata, access,
+                       created_at, retention_until, deleted_at, purge_after, deletion_reason
+                from documents
+                where workspace_id = :workspace_id
+                order by id
+                """,
+                workspace_id,
+            )
+            chunks = await self._rows(
+                connection,
+                """
+                select id, document_id, workspace_id, text, ordinal, metadata, access,
+                       embedding::text as embedding
+                from chunks
+                where workspace_id = :workspace_id
+                order by id
+                """,
+                workspace_id,
+            )
+            entities = await self._rows(
+                connection,
+                """
+                select id, workspace_id, document_id, name, type, metadata, access
+                from entities
+                where workspace_id = :workspace_id
+                order by id
+                """,
+                workspace_id,
+            )
+            relationships = await self._rows(
+                connection,
+                """
+                select id, workspace_id, document_id, subject, predicate, object,
+                       evidence_chunk_id, confidence, metadata, access
+                from relationships
+                where workspace_id = :workspace_id
+                order by id
+                """,
+                workspace_id,
+            )
+
         return {
             "documents": documents,
             "chunks": chunks,
