@@ -24,6 +24,13 @@ jobs:
           python-version: "3.11"
           cache: pip
 
+      - name: Install local OCR runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y poppler-utils tesseract-ocr fonts-dejavu-core
+          pdftoppm -v
+          tesseract --version
+
       - name: Install
         run: make install
 
