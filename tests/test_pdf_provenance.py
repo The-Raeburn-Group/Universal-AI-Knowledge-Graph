@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
@@ -27,7 +28,10 @@ class _FakeReader:
 
 
 @pytest.mark.asyncio
-async def test_pdf_connector_records_page_spans_and_ocr_diagnostics(monkeypatch) -> None:
+async def test_pdf_connector_records_page_spans_and_ocr_diagnostics(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
     _FakeReader.pages = [
         _FakePage("First page has enough extracted text for retrieval and citation."),
         _FakePage(""),
@@ -35,11 +39,12 @@ async def test_pdf_connector_records_page_spans_and_ocr_diagnostics(monkeypatch)
         _FakePage("Fourth page also has enough extracted text for normal retrieval."),
     ]
     monkeypatch.setattr("universal_kg.connectors.pdf_connector.PdfReader", _FakeReader)
+    pdf_path = tmp_path / "example.pdf"
     connector = PdfConnector(
         ConnectorConfig(
             workspace_id="workspace-a",
             source_name="pdf",
-            options={"path": "/tmp/example.pdf"},
+            options={"path": str(pdf_path)},
         )
     )
 
@@ -60,14 +65,18 @@ async def test_pdf_connector_records_page_spans_and_ocr_diagnostics(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_pdf_connector_fails_visibly_when_all_pages_require_ocr(monkeypatch) -> None:
+async def test_pdf_connector_fails_visibly_when_all_pages_require_ocr(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
     _FakeReader.pages = [_FakePage(""), _FakePage(None)]
     monkeypatch.setattr("universal_kg.connectors.pdf_connector.PdfReader", _FakeReader)
+    pdf_path = tmp_path / "scanned.pdf"
     connector = PdfConnector(
         ConnectorConfig(
             workspace_id="workspace-a",
             source_name="pdf",
-            options={"path": "/tmp/scanned.pdf"},
+            options={"path": str(pdf_path)},
         )
     )
 
@@ -85,11 +94,11 @@ def test_pdf_chunks_never_cross_page_boundaries_and_retain_page_metadata() -> No
     document = Document(
         workspace_id="workspace-a",
         source="pdf",
-        external_id="/tmp/example.pdf",
+        external_id="fixtures/example.pdf",
         title="example.pdf",
         body=body,
         metadata={
-            "path": "/tmp/example.pdf",
+            "path": "fixtures/example.pdf",
             "page_count": 2,
             "page_spans": spans,
             "extraction_method": "pypdf",
