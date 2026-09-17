@@ -104,6 +104,8 @@ def _resolve_ocr_binaries() -> tuple[str, str]:
         missing.append("tesseract")
     if missing:
         raise ValueError(f"pdf_ocr_unavailable:missing={','.join(missing)}")
+    if pdftoppm is None or tesseract is None:
+        raise AssertionError("OCR binary validation invariant failed")
     return pdftoppm, tesseract
 
 
@@ -261,14 +263,14 @@ class PdfConnector(Connector):
             )
             for page_number in candidate_pages:
                 result = ocr_results[page_number]
-                metadata = page_metadata[page_number - 1]
-                metadata["ocr_attempted"] = True
-                metadata["ocr_word_count"] = result.word_count
+                page_meta = page_metadata[page_number - 1]
+                page_meta["ocr_attempted"] = True
+                page_meta["ocr_word_count"] = result.word_count
                 if result.mean_confidence is not None:
-                    metadata["ocr_confidence"] = result.mean_confidence
+                    page_meta["ocr_confidence"] = result.mean_confidence
                 if _should_use_ocr_text(final_pages[page_number - 1], result.text):
                     final_pages[page_number - 1] = result.text
-                    metadata["extraction_method"] = "tesseract"
+                    page_meta["extraction_method"] = "tesseract"
                     ocr_pages.append(page_number)
 
         body, page_spans = _build_pdf_body(final_pages, page_metadata)
