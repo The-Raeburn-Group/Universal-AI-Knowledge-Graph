@@ -7,16 +7,28 @@ from typing import Any, Protocol
 
 import orjson
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
 
 from universal_kg.config import get_settings
 
 PRIVACY_EXPORT_SCHEMA = "ukg.workspace-export.v1"
 _PRIVACY_TABLES = ("documents", "chunks", "entities", "relationships")
+_COUNT_STATEMENTS = {
+    "documents": "select count(*) from documents where workspace_id = :workspace_id",
+    "chunks": "select count(*) from chunks where workspace_id = :workspace_id",
+    "entities": "select count(*) from entities where workspace_id = :workspace_id",
+    "relationships": "select count(*) from relationships where workspace_id = :workspace_id",
+}
+_DELETE_STATEMENTS = (
+    "delete from relationships where workspace_id = :workspace_id",
+    "delete from entities where workspace_id = :workspace_id",
+    "delete from chunks where workspace_id = :workspace_id",
+    "delete from documents where workspace_id = :workspace_id",
+)
 
 
 class PrivacyVerificationError(RuntimeError):
-    """Raised when an erasure operation cannot prove that scoped data is gone."""
+    """Raised when a privacy operation cannot prove its workspace boundary."""
 
 
 @dataclass(frozen=True)
@@ -80,7 +92,6 @@ def build_workspace_export(
                     f"privacy_export_cross_workspace_row:{table}:{scoped_workspace}"
                 )
 
-    record_hash = sha256(_canonical_bytes(records)).hexdigest()
     effective_generated_at = generated_at or datetime.now(UTC)
     if effective_generated_at.tzinfo is None or effective_generated_at.utcoffset() is None:
         raise ValueError("generated_at_must_be_timezone_aware")
@@ -90,7 +101,7 @@ def build_workspace_export(
         "workspace_id": workspace_id,
         "generated_at": effective_generated_at,
         "counts": {table: len(records[table]) for table in _PRIVACY_TABLES},
-        "records_sha256": record_hash,
+        "records_sha256": sha256(_canonical_bytes(records)).hexdigest(),
         "records": records,
     }
 
@@ -159,13 +170,14 @@ class PostgresPrivacyRepository:
             "relationships": relationships,
         }
 
-    async def _counts(self, connection: Any, workspace_id: str) -> dict[str, int]:
+    async def _counts(
+        self,
+        connection: AsyncConnection,
+        workspace_id: str,
+    ) -> dict[str, int]:
         counts: dict[str, int] = {}
-        for table in _PRIVACY_TABLES:
-            result = await connection.execute(
-                text(f"select count(*) as count from {table} where workspace_id = :workspace_id"),
-                {"workspace_id": workspace_id},
-            )
+        for table, statement in _COUNT_STATEMENTS.items():
+            result = await connection.execute(text(statement), {"workspace_id": workspace_id})
             counts[table] = int(result.scalar_one())
         return counts
 
@@ -175,12 +187,9 @@ class PostgresPrivacyRepository:
         async with self._engine.begin() as connection:
             before = await self._counts(connection, workspace_id)
 
-            # Delete child/graph rows explicitly so the receipt reflects every store touched.
-            for table in ("relationships", "entities", "chunks", "documents"):
-                await connection.execute(
-                    text(f"delete from {table} where workspace_id = :workspace_id"),
-                    {"workspace_id": workspace_id},
-                )
+            # Explicitly touch every workspace-scoped store so verification cannot rely on cascade.
+            for statement in _DELETE_STATEMENTS:
+                await connection.execute(text(statement), {"workspace_id": workspace_id})
 
             remaining = await self._counts(connection, workspace_id)
             if any(remaining.values()):
