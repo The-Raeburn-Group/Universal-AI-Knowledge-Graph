@@ -41,13 +41,20 @@ COPY --from=build /opt/venv /opt/venv
 COPY alembic.ini ./alembic.ini
 COPY migrations ./migrations
 
-# Build frontends are not required by the running service. Removing them also
-# prevents vendored build-only libraries from becoming runtime attack surface.
+# Build frontends are not required by the running service. Strip them from
+# both the application venv and the official Python base image so vendored
+# build-only libraries cannot remain runtime attack surface.
 RUN find /opt/venv/lib/python3.11/site-packages -maxdepth 1 \
         \( -name 'pip*' -o -name 'setuptools*' -o -name 'wheel*' \
            -o -name '_distutils_hack' -o -name 'pkg_resources' \) \
         -exec rm -rf '{}' + \
-    && rm -f /opt/venv/bin/pip /opt/venv/bin/pip3 /opt/venv/bin/pip3.11 /opt/venv/bin/wheel
+    && find /usr/local/lib/python3.11/site-packages -maxdepth 1 \
+        \( -name 'pip*' -o -name 'setuptools*' -o -name 'wheel*' \
+           -o -name '_distutils_hack' -o -name 'pkg_resources' \) \
+        -exec rm -rf '{}' + \
+    && rm -f \
+        /opt/venv/bin/pip /opt/venv/bin/pip3 /opt/venv/bin/pip3.11 /opt/venv/bin/wheel \
+        /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.11 /usr/local/bin/wheel
 
 USER ukg
 EXPOSE 8000
