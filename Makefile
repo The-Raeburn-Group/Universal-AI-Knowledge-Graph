@@ -1,7 +1,8 @@
-.PHONY: install lint format typecheck test build docker-build run db-migrate db-current db-backup db-restore db-verify-restore
+.PHONY: install lint format typecheck test build audit supply-chain docker-build run db-migrate db-current db-backup db-restore db-verify-restore
 
 BACKUP_FILE ?= build/backups/ukg.dump
 BACKUP_MANIFEST ?= build/backups/ukg.manifest.json
+IMAGE_TAG ?= local
 
 install:
 	python -m pip install --upgrade pip
@@ -24,8 +25,14 @@ build:
 	python -m pip install build==1.2.2.post1
 	python -m build
 
+audit:
+	pip-audit --skip-editable
+
+supply-chain:
+	python scripts/validate_supply_chain.py
+
 docker-build:
-	docker build -t universal-ai-knowledge-graph:local .
+	docker build -t universal-ai-knowledge-graph:$(IMAGE_TAG) .
 
 db-migrate:
 	alembic upgrade head
