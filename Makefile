@@ -5,7 +5,7 @@ BACKUP_MANIFEST ?= build/backups/ukg.manifest.json
 IMAGE_TAG ?= local
 
 install:
-	python -m pip install --upgrade pip setuptools==84.0.0 wheel==0.45.1
+	python -m pip install --upgrade pip setuptools==84.0.0 wheel==0.48.0
 	python -m pip install -e '.[dev]'
 
 lint:
