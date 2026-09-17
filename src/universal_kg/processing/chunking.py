@@ -59,7 +59,26 @@ def _base_metadata(document: Document) -> dict[str, Any]:
     page_count = document.metadata.get("page_count")
     if isinstance(page_count, int) and not isinstance(page_count, bool) and page_count >= 1:
         metadata["page_count"] = page_count
+    for key in ("ocr_engine", "ocr_execution", "ocr_data_egress", "ocr_language"):
+        value = document.metadata.get(key)
+        if isinstance(value, str) and value.strip():
+            metadata[key] = value
     return metadata
+
+
+def _copy_page_ocr_metadata(span: dict[str, Any], metadata: dict[str, Any]) -> None:
+    page_method = span.get("extraction_method")
+    if isinstance(page_method, str) and page_method.strip():
+        metadata["page_extraction_method"] = page_method
+    attempted = span.get("ocr_attempted")
+    if isinstance(attempted, bool):
+        metadata["page_ocr_attempted"] = attempted
+    confidence = span.get("ocr_confidence")
+    if isinstance(confidence, int | float) and not isinstance(confidence, bool):
+        metadata["page_ocr_confidence"] = float(confidence)
+    word_count = span.get("ocr_word_count")
+    if isinstance(word_count, int) and not isinstance(word_count, bool) and word_count >= 0:
+        metadata["page_ocr_word_count"] = word_count
 
 
 def _chunk_pdf_document(document: Document, max_chars: int, overlap: int) -> list[Chunk]:
@@ -87,6 +106,7 @@ def _chunk_pdf_document(document: Document, max_chars: int, overlap: int) -> lis
         char_count = span.get("char_count")
         if isinstance(char_count, int) and not isinstance(char_count, bool):
             page_metadata["page_char_count"] = char_count
+        _copy_page_ocr_metadata(span, page_metadata)
 
         for chunk_text in _chunk_text(page_text, max_chars, overlap):
             chunks.append(
