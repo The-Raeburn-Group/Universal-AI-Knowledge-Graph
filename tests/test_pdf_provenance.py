@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from PIL import Image, ImageDraw, ImageFont
 
 from universal_kg.connectors.base import ConnectorConfig
-from universal_kg.connectors.pdf_connector import PdfConnector, _build_pdf_body
+from universal_kg.connectors.pdf_connector import (
+    PdfConnector,
+    _build_pdf_body,
+    _parse_tesseract_tsv,
+)
 from universal_kg.domain import Document, SearchHit
 from universal_kg.processing.chunking import chunk_document
 from universal_kg.services.search import _citation
@@ -54,7 +60,9 @@ async def test_pdf_connector_records_page_spans_and_ocr_diagnostics(
     assert document.metadata["page_count"] == 4
     assert document.metadata["empty_pages"] == [2]
     assert document.metadata["low_text_pages"] == [3]
+    assert document.metadata["ocr_candidate_pages"] == [2, 3]
     assert document.metadata["ocr_required_pages"] == [2, 3]
+    assert document.metadata["ocr_attempted_pages"] == []
     assert document.metadata["ocr_performed"] is False
     assert document.metadata["extraction_method"] == "pypdf"
 
@@ -85,6 +93,88 @@ async def test_pdf_connector_fails_visibly_when_all_pages_require_ocr(
         match=r"pdf_has_no_extractable_text:ocr_required_pages=1,2",
     ):
         _ = [document async for document in connector.load()]
+
+
+def test_tesseract_tsv_parser_preserves_lines_and_confidence() -> None:
+    tsv = (
+        "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n"
+        "5\t1\t1\t1\t1\t1\t0\t0\t10\t10\t90.0\tRaeburn\n"
+        "5\t1\t1\t1\t1\t2\t0\t0\t10\t10\t80.0\tAI\n"
+        "5\t1\t1\t1\t2\t1\t0\t0\t10\t10\t70.0\tEvidence\n"
+    )
+    result = _parse_tesseract_tsv(tsv)
+    assert result.text == "Raeburn AI\nEvidence"
+    assert result.word_count == 3
+    assert result.mean_confidence == 80.0
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    shutil.which("tesseract") is None or shutil.which("pdftoppm") is None,
+    reason="local OCR binaries are not installed",
+)
+async def test_local_ocr_extracts_image_only_pdf_and_retains_provenance(tmp_path: Path) -> None:
+    font_path = Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
+    if not font_path.exists():
+        pytest.skip("DejaVu Sans test font is not installed")
+
+    image = Image.new("RGB", (1800, 600), "white")
+    draw = ImageDraw.Draw(image)
+    font = ImageFont.truetype(str(font_path), 72)
+    draw.text((80, 220), "RAEBURN OCR TEST 12345", fill="black", font=font)
+    pdf_path = tmp_path / "image-only.pdf"
+    image.save(pdf_path, "PDF", resolution=150.0)
+
+    connector = PdfConnector(
+        ConnectorConfig(
+            workspace_id="workspace-a",
+            source_name="pdf",
+            options={
+                "path": str(pdf_path),
+                "ocr_enabled": True,
+                "ocr_dpi": 200,
+                "ocr_timeout_seconds": 60,
+            },
+        )
+    )
+    documents = [document async for document in connector.load()]
+    assert len(documents) == 1
+    document = documents[0]
+
+    assert "RAEBURN" in document.body.upper()
+    assert document.metadata["ocr_candidate_pages"] == [1]
+    assert document.metadata["ocr_attempted_pages"] == [1]
+    assert document.metadata["ocr_pages"] == [1]
+    assert document.metadata["ocr_failed_pages"] == []
+    assert document.metadata["ocr_required_pages"] == []
+    assert document.metadata["ocr_performed"] is True
+    assert document.metadata["ocr_engine"] == "tesseract"
+    assert document.metadata["ocr_execution"] == "local-process"
+    assert document.metadata["ocr_data_egress"] == "none"
+    assert document.metadata["extraction_method"] == "pypdf+tesseract"
+    assert 0.0 <= document.metadata["ocr_mean_confidence"] <= 100.0
+
+    span = document.metadata["page_spans"][0]
+    assert span["extraction_method"] == "tesseract"
+    assert span["ocr_attempted"] is True
+    assert 0.0 <= span["ocr_confidence"] <= 100.0
+    assert span["ocr_word_count"] >= 3
+
+    persisted = Document(
+        workspace_id=document.workspace_id,
+        source=document.source,
+        external_id=document.external_id,
+        title=document.title,
+        body=document.body,
+        metadata=document.metadata,
+    )
+    chunks = chunk_document(persisted)
+    assert chunks
+    assert chunks[0].metadata["page_extraction_method"] == "tesseract"
+    assert chunks[0].metadata["page_ocr_attempted"] is True
+    assert chunks[0].metadata["page_ocr_word_count"] >= 3
+    assert 0.0 <= chunks[0].metadata["page_ocr_confidence"] <= 100.0
+    assert chunks[0].metadata["ocr_data_egress"] == "none"
 
 
 def test_pdf_chunks_never_cross_page_boundaries_and_retain_page_metadata() -> None:
