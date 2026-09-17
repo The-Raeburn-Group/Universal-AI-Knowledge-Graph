@@ -129,7 +129,11 @@ class PostgresPrivacyRepository:
     async def export_workspace(self, workspace_id: str) -> dict[str, list[dict[str, Any]]]:
         workspace_id = validate_workspace_id(workspace_id)
         async with self._engine.begin() as connection:
-            # One transaction gives the export a coherent cross-table snapshot.
+            # READ COMMITTED can expose different snapshots to successive table reads.
+            # A read-only REPEATABLE READ transaction gives the complete DSAR one snapshot.
+            await connection.execute(
+                text("set transaction isolation level repeatable read, read only")
+            )
             documents = await self._rows(
                 connection,
                 """
