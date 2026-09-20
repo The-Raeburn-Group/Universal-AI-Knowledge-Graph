@@ -44,10 +44,10 @@ def _policy_json(policy: AccessPolicy) -> dict[str, Any]:
 
 
 def _access_filter(column: Any, access: AccessContext) -> Any:
-    clauses = [column["visibility"].astext == "workspace"]
-    clauses.append(column["principals"].contains([access.principal_id]))
-    clauses.extend(column["roles"].contains([role]) for role in access.roles)
-    clauses.extend(column["groups"].contains([group]) for group in access.groups)
+    clauses = [column.contains({"visibility": "workspace"})]
+    clauses.append(column.contains({"principals": [access.principal_id]}))
+    clauses.extend(column.contains({"roles": [role]}) for role in access.roles)
+    clauses.extend(column.contains({"groups": [group]}) for group in access.groups)
     return or_(*clauses)
 
 
@@ -342,6 +342,11 @@ class PostgresKnowledgeStore:
         )
 
         async with self._sessions() as session:
+            # pgvector 0.3.x HNSW chooses its approximate candidate set before
+            # PostgreSQL applies selective ACL predicates. Force an exact vector
+            # scan for permission-filtered retrieval so inaccessible neighbours
+            # cannot suppress permitted evidence from the final top-k.
+            await session.execute(text("SET LOCAL enable_indexscan = off"))
             rows = (await session.execute(statement)).all()
 
         hits: list[SearchHit] = []
