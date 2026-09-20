@@ -5,7 +5,14 @@ from uuid import uuid4
 
 import pytest
 
-from universal_kg.domain import AccessContext, AccessPolicy, DocumentIn, SearchRequest
+from universal_kg.domain import (
+    AccessContext,
+    AccessPolicy,
+    DocumentIn,
+    Entity,
+    Relationship,
+    SearchRequest,
+)
 from universal_kg.processing.embeddings import LocalHashEmbeddingProvider
 from universal_kg.services.ingestion import IngestionService
 from universal_kg.services.lifecycle import LifecycleService
@@ -54,6 +61,26 @@ async def test_postgres_ingestion_survives_restart_and_enforces_workspace_and_ac
             )
         )
         restricted_id = restricted_doc.id
+        await first_store.upsert_graph(
+            [
+                Entity(
+                    workspace_id=workspace_a,
+                    document_id=restricted_id,
+                    name="ParentAclDriftSentinel",
+                    access=AccessPolicy(visibility="workspace"),
+                )
+            ],
+            [
+                Relationship(
+                    workspace_id=workspace_a,
+                    document_id=restricted_id,
+                    subject="ParentAclDriftSentinel",
+                    predicate="reveals",
+                    object="RestrictedGraphDetail",
+                    access=AccessPolicy(visibility="workspace"),
+                )
+            ],
+        )
         await ingestion.ingest(
             DocumentIn(
                 workspace_id=workspace_b,
@@ -106,6 +133,17 @@ async def test_postgres_ingestion_survives_restart_and_enforces_workspace_and_ac
         )
         assert restricted_id in {hit.document_id for hit in board_response.hits}
         assert any("Aurora" in entity.name for entity in board_response.related_entities)
+
+        drift_entities, drift_relationships = await reopened_store.graph_context(
+            workspace_a,
+            "ParentAclDriftSentinel RestrictedGraphDetail",
+            outsider,
+        )
+        assert all(entity.name != "ParentAclDriftSentinel" for entity in drift_entities)
+        assert all(
+            relationship.subject != "ParentAclDriftSentinel"
+            for relationship in drift_relationships
+        )
 
         entities, relationships = await reopened_store.graph_context(
             workspace_a,
