@@ -377,6 +377,7 @@ class PostgresKnowledgeStore:
                 EntityRecord.workspace_id == workspace_id,
                 DocumentRecord.workspace_id == workspace_id,
                 DocumentRecord.deleted_at.is_(None),
+                _access_filter(DocumentRecord.access_json, access),
                 _access_filter(EntityRecord.access_json, access),
                 or_(*entity_conditions),
             )
@@ -395,6 +396,7 @@ class PostgresKnowledgeStore:
                         RelationshipRecord.workspace_id == workspace_id,
                         DocumentRecord.workspace_id == workspace_id,
                         DocumentRecord.deleted_at.is_(None),
+                        _access_filter(DocumentRecord.access_json, access),
                         _access_filter(RelationshipRecord.access_json, access),
                         or_(
                             RelationshipRecord.subject.in_(names),
