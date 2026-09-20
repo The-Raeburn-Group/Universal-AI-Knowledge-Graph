@@ -102,6 +102,7 @@ class MemoryKnowledgeStore:
             for entity in self.entities
             if entity.workspace_id == workspace_id
             and self._is_active_document(entity.document_id, workspace_id)
+            and access_allows(self.documents[entity.document_id].access, access)
             and access_allows(entity.access, access)
             and any(token in entity.name.lower() for token in tokens)
         ][:20]
@@ -111,6 +112,7 @@ class MemoryKnowledgeStore:
             for rel in self.relationships
             if rel.workspace_id == workspace_id
             and self._is_active_document(rel.document_id, workspace_id)
+            and access_allows(self.documents[rel.document_id].access, access)
             and access_allows(rel.access, access)
             and (rel.subject in names or rel.object in names)
         ][:50]
