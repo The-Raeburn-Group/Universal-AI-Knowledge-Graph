@@ -135,6 +135,21 @@ def test_requires_delegated_identity_and_rejects_workspace_spoofing() -> None:
     assert mismatch.status_code == 403
 
 
+
+
+def test_rejects_malformed_delegated_identity_header_as_client_error() -> None:
+    client = TestClient(app)
+    response = client.post(
+        "/v1/search",
+        headers={
+            "X-Workspace-ID": "bad workspace",
+            "X-Actor-ID": "viewer@example.com",
+        },
+        json={"workspace_id": "valid-workspace", "query": "test", "limit": 5},
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Invalid delegated access context"
+
 def test_rejects_invalid_workspace() -> None:
     client = TestClient(app)
     response = client.post(
