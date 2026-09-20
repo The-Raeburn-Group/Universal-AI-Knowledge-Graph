@@ -54,6 +54,22 @@ class MemoryKnowledgeStore:
             and document.deleted_at is None
         )
 
+    def _document_allows(
+        self,
+        document_id: str | None,
+        workspace_id: str,
+        access: AccessContext,
+    ) -> bool:
+        if not document_id:
+            return False
+        document = self.documents.get(document_id)
+        return bool(
+            document
+            and document.workspace_id == workspace_id
+            and document.deleted_at is None
+            and access_allows(document.access, access)
+        )
+
     async def search(
         self,
         workspace_id: str,
@@ -101,8 +117,7 @@ class MemoryKnowledgeStore:
             entity
             for entity in self.entities
             if entity.workspace_id == workspace_id
-            and self._is_active_document(entity.document_id, workspace_id)
-            and access_allows(self.documents[entity.document_id].access, access)
+            and self._document_allows(entity.document_id, workspace_id, access)
             and access_allows(entity.access, access)
             and any(token in entity.name.lower() for token in tokens)
         ][:20]
@@ -111,8 +126,7 @@ class MemoryKnowledgeStore:
             rel
             for rel in self.relationships
             if rel.workspace_id == workspace_id
-            and self._is_active_document(rel.document_id, workspace_id)
-            and access_allows(self.documents[rel.document_id].access, access)
+            and self._document_allows(rel.document_id, workspace_id, access)
             and access_allows(rel.access, access)
             and (rel.subject in names or rel.object in names)
         ][:50]
