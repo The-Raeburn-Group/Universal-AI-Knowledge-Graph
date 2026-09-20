@@ -8,6 +8,8 @@ import pytest
 from universal_kg.domain import (
     AccessContext,
     AccessPolicy,
+    Chunk,
+    Document,
     DocumentIn,
     Entity,
     Relationship,
@@ -158,6 +160,85 @@ async def test_postgres_ingestion_survives_restart_and_enforces_workspace_and_ac
     finally:
         await reopened_store.close()
 
+
+
+@pytest.mark.asyncio
+async def test_postgres_acl_filter_preserves_accessible_top_k_beyond_hnsw_candidates() -> None:
+    database_url = os.environ.get("UKG_DATABASE_URL")
+    if not database_url:
+        pytest.skip("UKG_DATABASE_URL is required for PostgreSQL integration test")
+
+    workspace = f"postgres-acl-topk-{uuid4()}"
+    restricted_policy = AccessPolicy(
+        visibility="restricted",
+        groups=["board"],
+        source_acl_ref="crm-acl:nearest-restricted:v1",
+    )
+    store = PostgresKnowledgeStore(database_url, embedding_dimensions=384)
+    query_vector = [1.0] + [0.0] * 383
+    restricted_vector = query_vector
+    accessible_vector = [0.999, 0.0447101778] + [0.0] * 382
+    restricted_doc = Document(
+        id=str(uuid4()),
+        workspace_id=workspace,
+        source="crm",
+        title="Restricted nearest candidates",
+        body="Nearest vectors are inaccessible to the viewer.",
+        access=restricted_policy,
+    )
+    accessible_doc = Document(
+        id=str(uuid4()),
+        workspace_id=workspace,
+        source="manual",
+        title="Accessible result",
+        body="This permitted result must survive selective ACL filtering.",
+        access=AccessPolicy(visibility="workspace"),
+    )
+
+    try:
+        await store.check_ready()
+        await store.upsert_document(restricted_doc)
+        await store.upsert_document(accessible_doc)
+
+        restricted_chunks = [
+            Chunk(
+                id=str(uuid4()),
+                document_id=restricted_doc.id,
+                workspace_id=workspace,
+                text=f"Restricted neighbour {index}",
+                ordinal=index,
+                access=restricted_policy,
+            )
+            for index in range(64)
+        ]
+        accessible_chunk = Chunk(
+            id=str(uuid4()),
+            document_id=accessible_doc.id,
+            workspace_id=workspace,
+            text="Accessible result beyond the nearest restricted neighbours.",
+            ordinal=0,
+            access=AccessPolicy(visibility="workspace"),
+        )
+        await store.upsert_chunks(
+            [*restricted_chunks, accessible_chunk],
+            [*[restricted_vector for _ in restricted_chunks], accessible_vector],
+        )
+
+        outsider = AccessContext(
+            workspace_id=workspace,
+            principal_id="viewer@example.com",
+            groups=["staff"],
+        )
+        hits = await store.search(
+            workspace,
+            query_vector,
+            limit=1,
+            access=outsider,
+        )
+
+        assert [hit.document_id for hit in hits] == [accessible_doc.id]
+    finally:
+        await store.close()
 
 @pytest.mark.asyncio
 async def test_postgres_tombstone_hides_vector_and_graph_then_cascade_purges() -> None:
