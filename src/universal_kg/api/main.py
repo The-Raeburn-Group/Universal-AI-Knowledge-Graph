@@ -8,6 +8,7 @@ from typing import Annotated
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import ORJSONResponse
+from pydantic import ValidationError
 
 from universal_kg.access import AccessDeniedError, ensure_workspace_access
 from universal_kg.config import Settings, get_settings
@@ -101,12 +102,18 @@ async def delegated_access_context(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Delegated workspace and actor context are required",
         )
-    return AccessContext(
-        workspace_id=x_workspace_id,
-        principal_id=x_actor_id,
-        roles=_split_header_values(x_actor_roles),
-        groups=_split_header_values(x_actor_groups),
-    )
+    try:
+        return AccessContext(
+            workspace_id=x_workspace_id,
+            principal_id=x_actor_id,
+            roles=_split_header_values(x_actor_roles),
+            groups=_split_header_values(x_actor_groups),
+        )
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Invalid delegated access context",
+        ) from exc
 
 
 DelegatedAccess = Annotated[AccessContext, Depends(delegated_access_context)]

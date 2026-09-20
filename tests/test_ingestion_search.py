@@ -5,7 +5,14 @@ from hashlib import sha256
 import pytest
 
 from universal_kg.access import AccessDeniedError
-from universal_kg.domain import AccessContext, AccessPolicy, DocumentIn, SearchRequest
+from universal_kg.domain import (
+    AccessContext,
+    AccessPolicy,
+    DocumentIn,
+    Entity,
+    Relationship,
+    SearchRequest,
+)
 from universal_kg.services.ingestion import IngestionService
 from universal_kg.services.search import SearchService
 from universal_kg.storage.memory import MemoryKnowledgeStore
@@ -193,6 +200,73 @@ async def test_search_rejects_delegated_workspace_mismatch() -> None:
             access("workspace-b"),
         )
 
+
+
+@pytest.mark.asyncio
+async def test_graph_context_rechecks_parent_document_acl_when_child_acl_drifts() -> None:
+    store = MemoryKnowledgeStore()
+    ingestion = IngestionService(store)
+    search = SearchService(store)
+
+    workspace = "acl-drift-memory"
+    restricted = await ingestion.ingest(
+        DocumentIn(
+            workspace_id=workspace,
+            source="crm",
+            title="Restricted source",
+            body="ParentAclSentinel is restricted to the board.",
+            access=AccessPolicy(
+                visibility="restricted",
+                groups=["board"],
+                source_acl_ref="crm-acl:sentinel:v1",
+            ),
+        )
+    )
+
+    await store.upsert_graph(
+        [
+            Entity(
+                workspace_id=workspace,
+                document_id=restricted.id,
+                name="ParentAclSentinel",
+                access=AccessPolicy(visibility="workspace"),
+            )
+        ],
+        [
+            Relationship(
+                workspace_id=workspace,
+                document_id=restricted.id,
+                subject="ParentAclSentinel",
+                predicate="reveals",
+                object="RestrictedDetail",
+                access=AccessPolicy(visibility="workspace"),
+            )
+        ],
+    )
+
+    outsider = access(workspace, "viewer@example.com", groups=["staff"])
+    response = await search.search(
+        SearchRequest(
+            workspace_id=workspace,
+            query="ParentAclSentinel RestrictedDetail",
+            limit=10,
+        ),
+        outsider,
+    )
+    assert response.hits == []
+    assert all(entity.name != "ParentAclSentinel" for entity in response.related_entities)
+    assert all(
+        relationship.subject != "ParentAclSentinel"
+        for relationship in response.relationships
+    )
+
+    board = access(workspace, "director@example.com", groups=["BOARD"])
+    board_response = await search.search(
+        SearchRequest(workspace_id=workspace, query="ParentAclSentinel", limit=10),
+        board,
+    )
+    assert restricted.id in {hit.document_id for hit in board_response.hits}
+    assert any(entity.name == "ParentAclSentinel" for entity in board_response.related_entities)
 
 def test_restricted_access_policy_requires_a_subject() -> None:
     with pytest.raises(ValueError, match="restricted access requires"):
