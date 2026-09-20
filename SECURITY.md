@@ -47,9 +47,20 @@ self-asserted browser/client claims; deployments must prevent direct untrusted c
 supplying them without the authenticated gateway/service credential.
 
 PostgreSQL retrieval applies workspace and ACL predicates before vector ranking/limit selection.
-Graph entity/relationship retrieval applies the same policy before context is assembled. This is
-intentional: fetching prohibited rows and filtering them only after ranking could leak existence,
-scores or graph structure and could suppress accessible evidence from the top-k result set.
+Permission-filtered vector search deliberately uses exact distance ranking rather than approximate
+HNSW candidate selection, because an approximate candidate set dominated by restricted rows can
+otherwise suppress accessible evidence from the returned top-k. ACL predicates use whole-document
+JSONB containment so the persisted GIN indexes can participate in permission filtering.
+
+Graph entity/relationship retrieval applies both the derived graph-row ACL and the parent source
+document ACL before context is assembled. The parent check is intentional defense in depth: stale,
+corrupt or accidentally broadened child ACL metadata must never make a restricted source visible.
+Fetching prohibited rows and filtering them only after ranking/context assembly could leak
+existence, scores or graph structure.
+
+Malformed delegated identity headers are rejected as client errors rather than falling through to
+an internal server error. Production still relies on the authenticated service/gateway boundary to
+originate delegated workspace, principal, role and group context.
 
 Existing rows upgraded from the original schema are explicitly backfilled as workspace-visible,
 which preserves historical behavior. Real source connectors must map source permissions to the
