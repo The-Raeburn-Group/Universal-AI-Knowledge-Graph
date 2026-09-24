@@ -1,4 +1,4 @@
-FROM python:3.11.16-alpine3.24 AS build
+FROM python:3.14.6-alpine3.24 AS build
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -19,7 +19,7 @@ RUN python -m venv /opt/venv \
     && /opt/venv/bin/pip install . \
     && /opt/venv/bin/pip check
 
-FROM python:3.11.16-alpine3.24 AS runtime
+FROM python:3.14.6-alpine3.24 AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
