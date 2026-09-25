@@ -196,6 +196,10 @@ async def search(payload: SearchRequest, access: DelegatedAccess) -> SearchRespo
         workspace_id=payload.workspace_id,
         metadata={
             "limit": payload.limit,
+            "retrieval_mode": payload.retrieval_mode,
+            "candidate_multiplier": payload.candidate_multiplier,
+            "rerank": payload.rerank,
+            "graph_depth": payload.graph_depth if payload.include_graph else 0,
             "actor_id": access.principal_id,
             "role_count": len(access.roles),
             "group_count": len(access.groups),
