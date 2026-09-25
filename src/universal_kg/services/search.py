@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from datetime import UTC, datetime
 from hashlib import sha256
-import re
 
 from universal_kg.access import ensure_workspace_access
 from universal_kg.content_security import assess_retrieved_content
