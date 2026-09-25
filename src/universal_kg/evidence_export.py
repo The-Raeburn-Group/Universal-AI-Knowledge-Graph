@@ -74,6 +74,11 @@ def _document_version(
     return f"chunk-sha256:{chunk_hash}"
 
 
+def _canonical_utc(value: datetime) -> str:
+    normalized = value.astimezone(UTC).isoformat()
+    return normalized[:-6] + "Z" if normalized.endswith("+00:00") else normalized
+
+
 def _canonical_bundle_payload(
     *,
     workspace_id: str,
@@ -85,14 +90,14 @@ def _canonical_bundle_payload(
         "contract_version": EVIDENCE_EXPORT_VERSION,
         "workspace_id": workspace_id,
         "query": query,
-        "retrieved_at": retrieved_at.isoformat(),
+        "retrieved_at": _canonical_utc(retrieved_at),
         "sources": [
             {
                 "id": source.id,
                 "uri": source.uri,
                 "title": source.title,
                 "source_type": source.source_type,
-                "retrieved_at": source.retrieved_at.isoformat(),
+                "retrieved_at": _canonical_utc(source.retrieved_at),
                 "workspace_id": source.workspace_id,
                 "document_id": source.document_id,
                 "document_version": source.document_version,
