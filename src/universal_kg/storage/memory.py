@@ -135,7 +135,7 @@ class MemoryKnowledgeStore:
                 chunk.access, access
             ):
                 continue
-            terms = _lexical_terms(document.title + " " + chunk.text)
+            terms = _lexical_terms(chunk.text)
             accessible.append((chunk, document, terms))
 
         if not accessible:
@@ -204,12 +204,18 @@ class MemoryKnowledgeStore:
         for entity in allowed_entities:
             by_name.setdefault(entity.name, []).append(entity)
 
+        seed_entities = sorted(
+            (
+                entity
+                for entity in allowed_entities
+                if any(token in entity.name.lower() for token in tokens)
+            ),
+            key=lambda item: (item.name, item.id),
+        )[:20]
         selected: dict[str, Entity] = {
-            entity.id: entity
-            for entity in allowed_entities
-            if any(token in entity.name.lower() for token in tokens)
+            entity.id: entity for entity in seed_entities
         }
-        frontier = {entity.name for entity in selected.values()}
+        frontier = {entity.name for entity in seed_entities}
         relationship_by_id: dict[str, Relationship] = {}
 
         for _ in range(depth):
