@@ -9,7 +9,9 @@ from pydantic import BaseModel, Field
 
 from universal_kg.domain import SearchResponse
 
-EVIDENCE_EXPORT_VERSION = "raeburnai.kg-evidence-export.v1"
+EVIDENCE_EXPORT_VERSION: Literal["raeburnai.kg-evidence-export.v1"] = (
+    "raeburnai.kg-evidence-export.v1"
+)
 
 EvidenceSourceType = Literal["primary", "secondary", "internal", "unknown"]
 
