@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from hashlib import sha256
-from typing import Literal
+import json
+from typing import Literal, cast
 
 from pydantic import BaseModel, Field
 
@@ -40,7 +41,7 @@ class EvidenceExportBundle(BaseModel):
 def _canonical_source_type(metadata: dict[str, object]) -> EvidenceSourceType:
     value = metadata.get("evidence_source_type")
     if isinstance(value, str) and value in {"primary", "secondary", "internal", "unknown"}:
-        return value  # type: ignore[return-value]
+        return cast(EvidenceSourceType, value)
     return "unknown"
 
 
@@ -80,35 +81,20 @@ def _bundle_digest_payload(
     retrieved_at: datetime,
     sources: list[EvidenceExportSource],
 ) -> str:
-    source_payload = [
-        "|".join(
-            [
-                source.id,
-                source.uri,
-                source.title,
-                source.source_type,
-                source.retrieved_at.isoformat(),
-                source.workspace_id,
-                source.document_id,
-                source.document_version,
-                source.chunk_id,
-                source.excerpt,
-                source.content_hash,
-                source.source_acl_ref or "",
-            ]
-        )
-        for source in sources
-    ]
-    material = "\n".join(
-        [
-            EVIDENCE_EXPORT_VERSION,
-            workspace_id,
-            query,
-            retrieved_at.isoformat(),
-            *source_payload,
-        ]
+    payload = {
+        "contract_version": EVIDENCE_EXPORT_VERSION,
+        "workspace_id": workspace_id,
+        "query": query,
+        "retrieved_at": retrieved_at.isoformat(),
+        "sources": [source.model_dump(mode="json") for source in sources],
+    }
+    canonical = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
     )
-    return sha256(material.encode("utf-8")).hexdigest()
+    return sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def build_evidence_export(
@@ -116,7 +102,6 @@ def build_evidence_export(
     *,
     workspace_id: str,
 ) -> EvidenceExportBundle:
-    retrieved_at = datetime.now(UTC)
     exported: list[EvidenceExportSource] = []
     for hit in response.hits:
         citation = hit.citation
@@ -151,6 +136,9 @@ def build_evidence_export(
             )
         )
 
+    retrieved_at = (
+        exported[0].retrieved_at if exported else datetime.now(UTC)
+    )
     return EvidenceExportBundle(
         workspace_id=workspace_id,
         query=response.query,
