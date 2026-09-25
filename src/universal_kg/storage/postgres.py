@@ -417,6 +417,7 @@ class PostgresKnowledgeStore:
                 score=float(rank_value),
                 source=document.source,
                 metadata=document.metadata_json | chunk.metadata_json,
+                source_acl_ref=_source_acl_ref(document.access_json),
             )
             for document, chunk, rank_value in rows
         ]
