@@ -53,7 +53,8 @@ The service caps graph context at 20 entities and 50 relationships. Traversal ne
 
 Search responses include non-destructive diagnostics:
 
-- exact chunk-content duplicate candidates grouped by SHA-256 across multiple documents; and
+- exact chunk-content duplicate candidates grouped by the SHA-256 of each returned chunk;
+- exact document duplicate candidates grouped separately by the server-generated SHA-256 of the complete ingested document body; and
 - graph conflict candidates when the same subject/predicate is linked to multiple distinct objects.
 
 Conflict candidates are always labelled `review_required`. The system does not automatically choose a winning fact.
