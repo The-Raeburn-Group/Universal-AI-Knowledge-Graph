@@ -109,6 +109,7 @@ class MemoryKnowledgeStore:
                     score=score,
                     source=document.source,
                     metadata=document.metadata | chunk.metadata,
+                    source_acl_ref=document.access.source_acl_ref,
                 )
             )
         return hits
@@ -176,6 +177,7 @@ class MemoryKnowledgeStore:
                 score=score,
                 source=document.source,
                 metadata=document.metadata | chunk.metadata,
+                source_acl_ref=document.access.source_acl_ref,
             )
             for score, chunk, document in scored[:limit]
         ]

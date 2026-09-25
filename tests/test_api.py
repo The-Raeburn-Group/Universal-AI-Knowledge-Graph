@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 from universal_kg.api.main import app
+from universal_kg.evidence_export import EvidenceExportBundle, verify_evidence_export_bundle
 
 
 def delegated_headers(
@@ -221,3 +222,73 @@ def test_document_tombstone_requires_admin_and_hides_retrieval() -> None:
         json={"workspace_id": workspace},
     )
     assert retention_forbidden.status_code == 403
+
+def test_search_evidence_exports_integrity_bound_acl_filtered_sources() -> None:
+    client = TestClient(app)
+    workspace = "e2e-evidence"
+    owner_headers = delegated_headers(workspace, "alice@example.com")
+    outsider_headers = delegated_headers(workspace, "bob@example.com")
+    ingest_response = client.post(
+        "/v1/ingest",
+        headers=owner_headers,
+        json={
+            "workspace_id": workspace,
+            "source": "drive",
+            "title": "Approved control policy",
+            "body": "The approved control threshold is 75 percent.",
+            "metadata": {
+                "source_uri": "https://drive.example.test/file/policy-1",
+                "source_version": "revision-7",
+                "evidence_source_type": "primary",
+            },
+            "access": {
+                "visibility": "restricted",
+                "principals": ["alice@example.com"],
+                "roles": [],
+                "groups": [],
+                "source_acl_ref": "drive:file-policy-1:acl-v4",
+            },
+        },
+    )
+    assert ingest_response.status_code == 200
+
+    denied = client.post(
+        "/v1/search/evidence",
+        headers=outsider_headers,
+        json={
+            "workspace_id": workspace,
+            "query": "approved control threshold",
+            "retrieval_mode": "lexical",
+            "limit": 5,
+        },
+    )
+    assert denied.status_code == 200
+    assert denied.json()["sources"] == []
+
+    allowed = client.post(
+        "/v1/search/evidence",
+        headers=owner_headers,
+        json={
+            "workspace_id": workspace,
+            "query": "approved control threshold",
+            "retrieval_mode": "lexical",
+            "limit": 5,
+        },
+    )
+    assert allowed.status_code == 200
+    bundle = EvidenceExportBundle.model_validate(allowed.json())
+    assert verify_evidence_export_bundle(bundle)
+    assert bundle.workspace_id == workspace
+    assert len(bundle.sources) == 1
+    source = bundle.sources[0]
+    assert source.uri == "https://drive.example.test/file/policy-1"
+    assert source.source_type == "primary"
+    assert source.document_version == "revision-7"
+    assert source.source_acl_ref == "drive:file-policy-1:acl-v4"
+    assert source.excerpt == "The approved control threshold is 75 percent."
+    assert source.security.trust == "untrusted"
+    assert source.security.instruction_authority == "none"
+    assert source.security.handling == "data-only"
+    assert source.security.injection_detected is False
+    assert len(source.content_hash) == 64
+

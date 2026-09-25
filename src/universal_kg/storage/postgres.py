@@ -44,6 +44,15 @@ def _policy_json(policy: AccessPolicy) -> dict[str, Any]:
     return policy.model_dump(mode="json")
 
 
+def _source_acl_ref(access_json: dict[str, Any]) -> str | None:
+    value = access_json.get("source_acl_ref")
+    if isinstance(value, str):
+        normalized = value.strip()
+        if normalized:
+            return normalized
+    return None
+
+
 def _access_filter(column: Any, access: AccessContext) -> Any:
     clauses = [column.contains({"visibility": "workspace"})]
     clauses.append(column.contains({"principals": [access.principal_id]}))
@@ -361,6 +370,7 @@ class PostgresKnowledgeStore:
                     score=1.0 - float(distance_value),
                     source=document.source,
                     metadata=document.metadata_json | chunk.metadata_json,
+                    source_acl_ref=_source_acl_ref(document.access_json),
                 )
             )
         return hits
@@ -407,6 +417,7 @@ class PostgresKnowledgeStore:
                 score=float(rank_value),
                 source=document.source,
                 metadata=document.metadata_json | chunk.metadata_json,
+                source_acl_ref=_source_acl_ref(document.access_json),
             )
             for document, chunk, rank_value in rows
         ]
