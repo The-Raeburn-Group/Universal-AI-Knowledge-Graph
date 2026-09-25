@@ -11,6 +11,7 @@ from universal_kg.domain import (
     AccessContext,
     CitationProvenance,
     ConflictCandidate,
+    DocumentDuplicateCandidate,
     DuplicateCandidate,
     Entity,
     Relationship,
@@ -93,33 +94,32 @@ def _reciprocal_rank(rank: int, constant: int = 60) -> float:
     return 1.0 / (constant + rank)
 
 
+def _contains_token_sequence(haystack: list[str], needle: list[str]) -> bool:
+    if not needle or len(needle) > len(haystack):
+        return False
+    width = len(needle)
+    return any(haystack[index : index + width] == needle for index in range(len(haystack) - width + 1))
+
+
 def _rerank_score(query: str, hit: SearchHit) -> float:
-    query_normalised = " ".join(_query_terms(query))
-    title_normalised = " ".join(_query_terms(hit.title))
-    text_normalised = " ".join(_query_terms(hit.text))
-    terms = set(_query_terms(query))
-    if not terms:
+    query_terms = _query_terms(query)
+    if not query_terms:
         return 0.0
 
-    available = set(_query_terms(hit.title + " " + hit.text))
+    title_terms = _query_terms(hit.title)
+    text_terms = _query_terms(hit.text)
+    terms = set(query_terms)
+    available = set([*title_terms, *text_terms])
     coverage = len(terms & available) / len(terms)
-    exact_title = 1.0 if query_normalised and query_normalised in title_normalised else 0.0
-    exact_text = 1.0 if query_normalised and query_normalised in text_normalised else 0.0
+    exact_title = 1.0 if _contains_token_sequence(title_terms, query_terms) else 0.0
+    exact_text = 1.0 if _contains_token_sequence(text_terms, query_terms) else 0.0
     return round(min(1.0, 0.65 * coverage + 0.2 * exact_title + 0.15 * exact_text), 6)
 
 
 def _duplicate_candidates(hits: list[SearchHit]) -> list[DuplicateCandidate]:
     grouped: dict[str, list[SearchHit]] = defaultdict(list)
     for hit in hits:
-        metadata_digest = hit.metadata.get("content_sha256")
-        digest = (
-            metadata_digest
-            if isinstance(metadata_digest, str)
-            and len(metadata_digest) == 64
-            and all(character in "0123456789abcdef" for character in metadata_digest)
-            else sha256(hit.text.encode("utf-8")).hexdigest()
-        )
-        grouped[digest].append(hit)
+        grouped[sha256(hit.text.encode("utf-8")).hexdigest()].append(hit)
 
     duplicates: list[DuplicateCandidate] = []
     for digest, grouped_hits in sorted(grouped.items()):
@@ -134,6 +134,27 @@ def _duplicate_candidates(hits: list[SearchHit]) -> list[DuplicateCandidate]:
             )
         )
     return duplicates
+
+
+def _document_duplicate_candidates(hits: list[SearchHit]) -> list[DocumentDuplicateCandidate]:
+    grouped: dict[str, set[str]] = defaultdict(set)
+    for hit in hits:
+        digest = hit.metadata.get("content_sha256")
+        if (
+            isinstance(digest, str)
+            and len(digest) == 64
+            and all(character in "0123456789abcdef" for character in digest)
+        ):
+            grouped[digest].add(hit.document_id)
+
+    return [
+        DocumentDuplicateCandidate(
+            content_sha256=digest,
+            document_ids=sorted(document_ids),
+        )
+        for digest, document_ids in sorted(grouped.items())
+        if len(document_ids) >= 2
+    ]
 
 
 def _conflict_candidates(relationships: list[Relationship]) -> list[ConflictCandidate]:
@@ -310,6 +331,7 @@ class SearchService:
             fused_candidates=len({hit.chunk_id for hit in [*vector_hits, *lexical_hits]}),
             graph_depth=request.graph_depth if request.include_graph else 0,
             duplicates=_duplicate_candidates(hits),
+            document_duplicates=_document_duplicate_candidates(hits),
             conflicts=_conflict_candidates(relationships),
         )
 
