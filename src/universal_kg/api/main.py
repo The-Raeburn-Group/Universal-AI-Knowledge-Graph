@@ -23,6 +23,7 @@ from universal_kg.domain import (
     TombstoneDocumentRequest,
     TombstoneDocumentResponse,
 )
+from universal_kg.evidence_export import EvidenceExportBundle, build_evidence_export
 from universal_kg.logging import configure_logging, get_logger
 from universal_kg.security import audit_event, client_key, rate_limiter
 from universal_kg.services.ingestion import IngestionService
@@ -209,6 +210,36 @@ async def search(payload: SearchRequest, access: DelegatedAccess) -> SearchRespo
         return await SearchService().search(payload, access)
     except AccessDeniedError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+
+
+@app.post(
+    "/v1/search/evidence",
+    response_model=EvidenceExportBundle,
+    dependencies=[Depends(require_api_key)],
+)
+async def search_evidence(
+    payload: SearchRequest,
+    access: DelegatedAccess,
+) -> EvidenceExportBundle:
+    audit_event(
+        "search.evidence_export",
+        workspace_id=payload.workspace_id,
+        metadata={
+            "limit": payload.limit,
+            "retrieval_mode": payload.retrieval_mode,
+            "candidate_multiplier": payload.candidate_multiplier,
+            "rerank": payload.rerank,
+            "graph_depth": payload.graph_depth if payload.include_graph else 0,
+            "actor_id": access.principal_id,
+            "role_count": len(access.roles),
+            "group_count": len(access.groups),
+        },
+    )
+    try:
+        response = await SearchService().search(payload, access)
+    except AccessDeniedError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    return build_evidence_export(response, workspace_id=payload.workspace_id)
 
 
 @app.post(
