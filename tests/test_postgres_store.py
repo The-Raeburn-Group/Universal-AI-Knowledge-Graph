@@ -485,3 +485,91 @@ async def test_postgres_lexical_search_and_multihop_graph_remain_acl_safe() -> N
     finally:
         await store.close()
 
+@pytest.mark.asyncio
+async def test_postgres_multihop_limit_excludes_already_collected_edges() -> None:
+    database_url = os.environ.get("UKG_DATABASE_URL")
+    if not database_url:
+        pytest.skip("UKG_DATABASE_URL is required for PostgreSQL integration test")
+
+    workspace = f"postgres-graph-budget-{uuid4()}"
+    store = PostgresKnowledgeStore(database_url, embedding_dimensions=384)
+    document = Document(
+        id=str(uuid4()),
+        workspace_id=workspace,
+        source="manual",
+        title="Graph budget source",
+        body="GraphRoot fanout and second-hop evidence.",
+    )
+
+    try:
+        await store.check_ready()
+        await store.upsert_document(document)
+
+        entities = [
+            Entity(
+                id="graph-root",
+                workspace_id=workspace,
+                document_id=document.id,
+                name="GraphRoot",
+            )
+        ]
+        relationships: list[Relationship] = []
+        for index in range(25):
+            node = f"Node{index:02d}"
+            leaf = f"Leaf{index:02d}"
+            entities.extend(
+                [
+                    Entity(
+                        id=f"node-{index:02d}",
+                        workspace_id=workspace,
+                        document_id=document.id,
+                        name=node,
+                    ),
+                    Entity(
+                        id=f"leaf-{index:02d}",
+                        workspace_id=workspace,
+                        document_id=document.id,
+                        name=leaf,
+                    ),
+                ]
+            )
+            relationships.extend(
+                [
+                    Relationship(
+                        id=f"first-hop-{index:02d}",
+                        workspace_id=workspace,
+                        document_id=document.id,
+                        subject="GraphRoot",
+                        predicate="links_to",
+                        object=node,
+                        confidence=0.9,
+                    ),
+                    Relationship(
+                        id=f"second-hop-{index:02d}",
+                        workspace_id=workspace,
+                        document_id=document.id,
+                        subject=node,
+                        predicate="links_to",
+                        object=leaf,
+                        confidence=0.9,
+                    ),
+                ]
+            )
+        await store.upsert_graph(entities, relationships)
+
+        actor = AccessContext(
+            workspace_id=workspace,
+            principal_id="viewer@example.com",
+        )
+        _, returned_relationships = await store.graph_context(
+            workspace,
+            "GraphRoot",
+            actor,
+            depth=2,
+        )
+        returned_ids = {relationship.id for relationship in returned_relationships}
+        assert "second-hop-18" in returned_ids
+        assert len(returned_ids) == len(returned_relationships)
+    finally:
+        await store.close()
+
