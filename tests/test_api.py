@@ -284,7 +284,11 @@ def test_search_evidence_exports_integrity_bound_acl_filtered_sources() -> None:
     assert source.uri == "https://drive.example.test/file/policy-1"
     assert source.source_type == "primary"
     assert source.document_version == "revision-7"
-    assert source.source_acl_ref is None
+    assert source.source_acl_ref == "drive:file-policy-1:acl-v4"
     assert source.excerpt == "The approved control threshold is 75 percent."
+    assert source.security.trust == "untrusted"
+    assert source.security.instruction_authority == "none"
+    assert source.security.handling == "data-only"
+    assert source.security.injection_detected is False
     assert len(source.content_hash) == 64
 
