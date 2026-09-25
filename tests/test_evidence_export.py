@@ -74,7 +74,7 @@ def test_uses_stable_urn_and_document_hash_when_source_metadata_is_unversioned()
     assert source.uri == "urn:raeburnai:kg:workspace-a:doc-1:chunk-1"
     assert source.document_version == f"sha256:{document_hash}"
     assert source.source_type == "internal"
-    assert source.source_acl_ref == "drive:file-1:acl-v3"
+    assert source.source_acl_ref is None
     assert verify_evidence_export_bundle(bundle)
 
 
