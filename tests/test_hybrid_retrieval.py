@@ -279,6 +279,104 @@ async def test_graph_traversal_is_depth_bounded_and_surfaces_conflicts_for_revie
     assert conflict.resolution == "review_required"
 
 
+
+
+async def test_lexical_backend_does_not_index_title_only_terms() -> None:
+    store = MemoryKnowledgeStore()
+    workspace = "lexical-field-parity"
+    await add_chunk(
+        store,
+        workspace=workspace,
+        document_id="title-only",
+        chunk_id="title-only:0",
+        title="TitleOnlyNeedle",
+        text="The body intentionally omits the query token.",
+        vector=[1.0, 0.0],
+    )
+
+    hits = await store.lexical_search(
+        workspace,
+        "TitleOnlyNeedle",
+        limit=10,
+        access=access(workspace),
+    )
+    assert hits == []
+
+
+async def test_reranker_exact_bonus_uses_token_boundaries() -> None:
+    store = MemoryKnowledgeStore()
+    workspace = "rerank-boundary"
+    await add_chunk(
+        store,
+        workspace=workspace,
+        document_id="quarterly",
+        chunk_id="quarterly:0",
+        title="Quarterly report",
+        text="General planning note.",
+        vector=[1.0, 0.0],
+    )
+
+    response = await SearchService(store, FixedEmbeddingProvider()).search(
+        SearchRequest(
+            workspace_id=workspace,
+            query="art",
+            retrieval_mode="vector",
+            limit=1,
+        ),
+        access(workspace),
+    )
+    assert response.hits[0].ranking is not None
+    assert response.hits[0].ranking.rerank_score == 0.0
+
+
+async def test_graph_seed_cap_prevents_omitted_seed_edges_from_entering_context() -> None:
+    store = MemoryKnowledgeStore()
+    workspace = "graph-seed-cap"
+    document = Document(
+        id="seed-doc",
+        workspace_id=workspace,
+        source="manual",
+        title="Seed graph",
+        body="Seed graph evidence.",
+    )
+    await store.upsert_document(document)
+
+    entities = [
+        Entity(
+            id=f"entity-{index:02d}",
+            workspace_id=workspace,
+            document_id=document.id,
+            name=f"SeedMatch {index:02d}",
+        )
+        for index in range(25)
+    ]
+    relationships = [
+        Relationship(
+            id="omitted-seed-edge",
+            workspace_id=workspace,
+            document_id=document.id,
+            subject="SeedMatch 24",
+            predicate="links_to",
+            object="ShouldNotAppear",
+            confidence=0.9,
+        )
+    ]
+    await store.upsert_graph(entities, relationships)
+
+    returned_entities, returned_relationships = await store.graph_context(
+        workspace,
+        "SeedMatch",
+        access(workspace),
+        depth=1,
+    )
+    assert len(returned_entities) == 20
+    assert all(entity.name != "SeedMatch 24" for entity in returned_entities)
+    assert all(
+        relationship.id != "omitted-seed-edge"
+        for relationship in returned_relationships
+    )
+
+
 async def test_duplicate_diagnostics_group_exact_content_across_documents() -> None:
     store = MemoryKnowledgeStore()
     workspace = "duplicates"
@@ -316,3 +414,4 @@ async def test_duplicate_diagnostics_group_exact_content_across_documents() -> N
     duplicate = response.diagnostics.duplicates[0]
     assert duplicate.document_ids == ["doc-a", "doc-b"]
     assert duplicate.chunk_ids == ["chunk-a", "chunk-b"]
+    assert response.diagnostics.document_duplicates == []
