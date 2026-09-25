@@ -466,13 +466,18 @@ class PostgresKnowledgeStore:
                             RelationshipRecord.object_name.in_(sorted(frontier)),
                         ),
                     )
-                    .order_by(
+                )
+                if relationship_rows:
+                    relationship_statement = relationship_statement.where(
+                        ~RelationshipRecord.id.in_(sorted(relationship_rows))
+                    )
+                relationship_statement = (
+                    relationship_statement.order_by(
                         RelationshipRecord.subject.asc(),
                         RelationshipRecord.predicate.asc(),
                         RelationshipRecord.object_name.asc(),
                         RelationshipRecord.id.asc(),
-                    )
-                    .limit(remaining)
+                    ).limit(remaining)
                 )
                 discovered_relationships = list(
                     (await session.scalars(relationship_statement)).all()
