@@ -241,7 +241,7 @@ class MemoryKnowledgeStore:
                     if len(selected) >= 20:
                         break
                     selected.setdefault(entity.id, entity)
-            frontier = next_names - {entity.name for entity in selected.values() if entity.name not in next_names}
+            frontier = next_names
 
         entities = sorted(selected.values(), key=lambda item: (item.name, item.id))[:20]
         relationships = sorted(
