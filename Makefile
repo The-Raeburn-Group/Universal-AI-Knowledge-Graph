@@ -1,4 +1,4 @@
-.PHONY: install lint format typecheck test build audit supply-chain docker-build run db-migrate db-current db-backup db-restore db-verify-restore
+.PHONY: install lint format typecheck test retrieval-bench build audit supply-chain docker-build run db-migrate db-current db-backup db-restore db-verify-restore
 
 BACKUP_FILE ?= build/backups/ukg.dump
 BACKUP_MANIFEST ?= build/backups/ukg.manifest.json
@@ -20,6 +20,9 @@ typecheck:
 
 test:
 	pytest
+
+retrieval-bench:
+	python scripts/retrieval_quality_bench.py
 
 build:
 	python -m pip install build==1.2.2.post1
