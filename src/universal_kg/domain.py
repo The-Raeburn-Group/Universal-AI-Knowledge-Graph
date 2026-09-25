@@ -248,6 +248,7 @@ class SearchHit(BaseModel):
     score: float
     source: str
     metadata: dict[str, Any] = Field(default_factory=dict)
+    source_acl_ref: str | None = Field(default=None, max_length=512, exclude=True)
     provenance: RetrievalProvenance | None = None
     citation: CitationProvenance | None = None
     security: ContentSecurity | None = None
