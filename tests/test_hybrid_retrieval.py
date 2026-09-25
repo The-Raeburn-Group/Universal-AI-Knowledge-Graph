@@ -5,10 +5,12 @@ from universal_kg.domain import (
     AccessPolicy,
     Chunk,
     Document,
+    DocumentIn,
     Entity,
     Relationship,
     SearchRequest,
 )
+from universal_kg.services.ingestion import IngestionService
 from universal_kg.services.search import SearchService
 from universal_kg.storage.memory import MemoryKnowledgeStore
 
@@ -375,6 +377,45 @@ async def test_graph_seed_cap_prevents_omitted_seed_edges_from_entering_context(
         relationship.id != "omitted-seed-edge"
         for relationship in returned_relationships
     )
+
+
+
+
+async def test_document_duplicate_diagnostics_use_server_generated_body_fingerprints() -> None:
+    store = MemoryKnowledgeStore()
+    workspace = "document-duplicates"
+    body = "Canonical duplicate document body with DocumentFingerprintNeedle."
+    ingestion = IngestionService(store, FixedEmbeddingProvider())
+    first = await ingestion.ingest(
+        DocumentIn(
+            workspace_id=workspace,
+            source="manual",
+            title="First copy",
+            body=body,
+        )
+    )
+    second = await ingestion.ingest(
+        DocumentIn(
+            workspace_id=workspace,
+            source="manual",
+            title="Second copy",
+            body=body,
+        )
+    )
+
+    response = await SearchService(store, FixedEmbeddingProvider()).search(
+        SearchRequest(
+            workspace_id=workspace,
+            query="DocumentFingerprintNeedle",
+            retrieval_mode="hybrid",
+            limit=10,
+        ),
+        access(workspace),
+    )
+    assert response.diagnostics is not None
+    assert len(response.diagnostics.document_duplicates) == 1
+    duplicate = response.diagnostics.document_duplicates[0]
+    assert duplicate.document_ids == sorted([first.id, second.id])
 
 
 async def test_duplicate_diagnostics_group_exact_content_across_documents() -> None:
