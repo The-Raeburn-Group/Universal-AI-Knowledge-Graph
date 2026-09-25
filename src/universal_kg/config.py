@@ -21,8 +21,8 @@ class Settings(BaseSettings):
     embedding_provider: str = "local-hash"
     embedding_dimensions: int = Field(default=384, ge=1, le=4096)
     openai_api_key: str | None = None
-    max_chunk_chars: int = 1600
-    chunk_overlap_chars: int = 200
+    max_chunk_chars: int = Field(default=1600, ge=1, le=20_000)
+    chunk_overlap_chars: int = Field(default=200, ge=0, le=20_000)
     retention_purge_grace_days: int = Field(default=30, ge=0, le=3650)
     log_level: str = "INFO"
 
