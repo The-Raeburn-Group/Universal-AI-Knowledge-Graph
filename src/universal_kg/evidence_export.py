@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from hashlib import sha256
-import json
 from typing import Literal, cast
 
 from pydantic import BaseModel, Field
@@ -152,7 +152,6 @@ def build_evidence_export(
         citation = hit.citation
         if citation is None:
             continue
-        source_acl_ref = hit.metadata.get("source_acl_ref")
         exported.append(
             EvidenceExportSource(
                 id=hit.chunk_id,
@@ -175,9 +174,9 @@ def build_evidence_export(
                 chunk_id=hit.chunk_id,
                 excerpt=hit.text,
                 content_hash=citation.content_sha256,
-                source_acl_ref=(
-                    source_acl_ref if isinstance(source_acl_ref, str) and source_acl_ref else None
-                ),
+                # ACL identity is intentionally not inferred from caller-controlled
+                # metadata. A future trusted store-derived binding can populate this.
+                source_acl_ref=None,
             )
         )
 
