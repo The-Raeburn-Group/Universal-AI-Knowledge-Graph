@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from hashlib import sha256
 
 from universal_kg.domain import Document, DocumentIn
 from universal_kg.processing.chunking import chunk_document
@@ -26,8 +27,14 @@ class IngestionService:
             if payload.retention_days is not None
             else None
         )
+        payload_data = payload.model_dump(exclude={"access", "retention_days", "metadata"})
+        metadata = {
+            **payload.metadata,
+            "content_sha256": sha256(payload.body.encode("utf-8")).hexdigest(),
+        }
         document = Document(
-            **payload.model_dump(exclude={"access", "retention_days"}),
+            **payload_data,
+            metadata=metadata,
             access=payload.access,
             created_at=created_at,
             retention_until=retention_until,

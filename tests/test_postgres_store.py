@@ -296,3 +296,280 @@ async def test_postgres_tombstone_hides_vector_and_graph_then_cascade_purges() -
         assert await lifecycle.tombstone(workspace, document.id, "already_purged") is None
     finally:
         await store.close()
+
+@pytest.mark.asyncio
+async def test_postgres_lexical_search_and_multihop_graph_remain_acl_safe() -> None:
+    database_url = os.environ.get("UKG_DATABASE_URL")
+    if not database_url:
+        pytest.skip("UKG_DATABASE_URL is required for PostgreSQL integration test")
+
+    workspace = f"postgres-hybrid-{uuid4()}"
+    store = PostgresKnowledgeStore(database_url, embedding_dimensions=384)
+    public_policy = AccessPolicy(visibility="workspace")
+    restricted_policy = AccessPolicy(
+        visibility="restricted",
+        groups=["board"],
+        source_acl_ref="crm:hybrid-secret:v1",
+    )
+    public_doc = Document(
+        id=str(uuid4()),
+        workspace_id=workspace,
+        source="manual",
+        title="Public LexicalNeedle",
+        body="LexicalNeedle public retrieval evidence.",
+        access=public_policy,
+    )
+    restricted_doc = Document(
+        id=str(uuid4()),
+        workspace_id=workspace,
+        source="crm",
+        title="Restricted LexicalNeedle",
+        body="LexicalNeedle restricted retrieval evidence.",
+        access=restricted_policy,
+    )
+    graph_doc = Document(
+        id=str(uuid4()),
+        workspace_id=workspace,
+        source="manual",
+        title="Graph traversal source",
+        body="GraphStart GraphMiddle GraphEnd.",
+        access=public_policy,
+    )
+    restricted_graph_doc = Document(
+        id=str(uuid4()),
+        workspace_id=workspace,
+        source="crm",
+        title="Restricted graph source",
+        body="GraphMiddle RestrictedGraphSecret.",
+        access=restricted_policy,
+    )
+    zero_vector = [0.0] * 384
+
+    try:
+        await store.check_ready()
+        for document in [public_doc, restricted_doc, graph_doc, restricted_graph_doc]:
+            await store.upsert_document(document)
+
+        await store.upsert_chunks(
+            [
+                Chunk(
+                    id=str(uuid4()),
+                    document_id=public_doc.id,
+                    workspace_id=workspace,
+                    text="LexicalNeedle public retrieval evidence.",
+                    ordinal=0,
+                    access=public_policy,
+                ),
+                Chunk(
+                    id=str(uuid4()),
+                    document_id=restricted_doc.id,
+                    workspace_id=workspace,
+                    text="LexicalNeedle restricted retrieval evidence.",
+                    ordinal=0,
+                    access=restricted_policy,
+                ),
+            ],
+            [zero_vector, zero_vector],
+        )
+
+        outsider = AccessContext(
+            workspace_id=workspace,
+            principal_id="viewer@example.com",
+            groups=["staff"],
+        )
+        lexical_hits = await store.lexical_search(
+            workspace,
+            "LexicalNeedle",
+            limit=10,
+            access=outsider,
+        )
+        assert [hit.document_id for hit in lexical_hits] == [public_doc.id]
+
+        board = AccessContext(
+            workspace_id=workspace,
+            principal_id="director@example.com",
+            groups=["BOARD"],
+        )
+        board_hits = await store.lexical_search(
+            workspace,
+            "LexicalNeedle",
+            limit=10,
+            access=board,
+        )
+        assert {hit.document_id for hit in board_hits} == {
+            public_doc.id,
+            restricted_doc.id,
+        }
+
+        await store.upsert_graph(
+            [
+                Entity(
+                    id=str(uuid4()),
+                    workspace_id=workspace,
+                    document_id=graph_doc.id,
+                    name="GraphStart",
+                    access=public_policy,
+                ),
+                Entity(
+                    id=str(uuid4()),
+                    workspace_id=workspace,
+                    document_id=graph_doc.id,
+                    name="GraphMiddle",
+                    access=public_policy,
+                ),
+                Entity(
+                    id=str(uuid4()),
+                    workspace_id=workspace,
+                    document_id=graph_doc.id,
+                    name="GraphEnd",
+                    access=public_policy,
+                ),
+                Entity(
+                    id=str(uuid4()),
+                    workspace_id=workspace,
+                    document_id=restricted_graph_doc.id,
+                    name="RestrictedGraphSecret",
+                    access=restricted_policy,
+                ),
+            ],
+            [
+                Relationship(
+                    id=str(uuid4()),
+                    workspace_id=workspace,
+                    document_id=graph_doc.id,
+                    subject="GraphStart",
+                    predicate="links_to",
+                    object="GraphMiddle",
+                    confidence=0.9,
+                    access=public_policy,
+                ),
+                Relationship(
+                    id=str(uuid4()),
+                    workspace_id=workspace,
+                    document_id=graph_doc.id,
+                    subject="GraphMiddle",
+                    predicate="links_to",
+                    object="GraphEnd",
+                    confidence=0.9,
+                    access=public_policy,
+                ),
+                Relationship(
+                    id=str(uuid4()),
+                    workspace_id=workspace,
+                    document_id=restricted_graph_doc.id,
+                    subject="GraphMiddle",
+                    predicate="links_to",
+                    object="RestrictedGraphSecret",
+                    confidence=0.9,
+                    access=restricted_policy,
+                ),
+            ],
+        )
+
+        entities, relationships = await store.graph_context(
+            workspace,
+            "GraphStart",
+            outsider,
+            depth=2,
+        )
+        assert {entity.name for entity in entities} == {
+            "GraphStart",
+            "GraphMiddle",
+            "GraphEnd",
+        }
+        assert all(entity.name != "RestrictedGraphSecret" for entity in entities)
+        assert all(
+            relationship.object != "RestrictedGraphSecret"
+            for relationship in relationships
+        )
+    finally:
+        await store.close()
+
+@pytest.mark.asyncio
+async def test_postgres_multihop_limit_excludes_already_collected_edges() -> None:
+    database_url = os.environ.get("UKG_DATABASE_URL")
+    if not database_url:
+        pytest.skip("UKG_DATABASE_URL is required for PostgreSQL integration test")
+
+    workspace = f"postgres-graph-budget-{uuid4()}"
+    store = PostgresKnowledgeStore(database_url, embedding_dimensions=384)
+    document = Document(
+        id=str(uuid4()),
+        workspace_id=workspace,
+        source="manual",
+        title="Graph budget source",
+        body="GraphRoot fanout and second-hop evidence.",
+    )
+
+    try:
+        await store.check_ready()
+        await store.upsert_document(document)
+
+        entities = [
+            Entity(
+                id="graph-root",
+                workspace_id=workspace,
+                document_id=document.id,
+                name="GraphRoot",
+            )
+        ]
+        relationships: list[Relationship] = []
+        for index in range(25):
+            node = f"Node{index:02d}"
+            leaf = f"Leaf{index:02d}"
+            entities.extend(
+                [
+                    Entity(
+                        id=f"node-{index:02d}",
+                        workspace_id=workspace,
+                        document_id=document.id,
+                        name=node,
+                    ),
+                    Entity(
+                        id=f"leaf-{index:02d}",
+                        workspace_id=workspace,
+                        document_id=document.id,
+                        name=leaf,
+                    ),
+                ]
+            )
+            relationships.extend(
+                [
+                    Relationship(
+                        id=f"first-hop-{index:02d}",
+                        workspace_id=workspace,
+                        document_id=document.id,
+                        subject="GraphRoot",
+                        predicate="links_to",
+                        object=node,
+                        confidence=0.9,
+                    ),
+                    Relationship(
+                        id=f"second-hop-{index:02d}",
+                        workspace_id=workspace,
+                        document_id=document.id,
+                        subject=node,
+                        predicate="links_to",
+                        object=leaf,
+                        confidence=0.9,
+                    ),
+                ]
+            )
+        await store.upsert_graph(entities, relationships)
+
+        actor = AccessContext(
+            workspace_id=workspace,
+            principal_id="viewer@example.com",
+        )
+        _, returned_relationships = await store.graph_context(
+            workspace,
+            "GraphRoot",
+            actor,
+            depth=2,
+        )
+        returned_ids = {relationship.id for relationship in returned_relationships}
+        assert "second-hop-18" in returned_ids
+        assert len(returned_ids) == len(returned_relationships)
+    finally:
+        await store.close()
+

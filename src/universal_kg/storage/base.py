@@ -31,11 +31,20 @@ class KnowledgeStore(Protocol):
         access: AccessContext,
     ) -> list[SearchHit]: ...
 
+    async def lexical_search(
+        self,
+        workspace_id: str,
+        query: str,
+        limit: int,
+        access: AccessContext,
+    ) -> list[SearchHit]: ...
+
     async def graph_context(
         self,
         workspace_id: str,
         query: str,
         access: AccessContext,
+        depth: int = 1,
     ) -> tuple[list[Entity], list[Relationship]]: ...
 
     async def tombstone_document(

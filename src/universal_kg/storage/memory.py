@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
@@ -14,6 +15,12 @@ from universal_kg.domain import (
     SearchHit,
     TombstoneDocumentResponse,
 )
+
+_LEXICAL_TOKEN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
+
+
+def _lexical_terms(value: str) -> list[str]:
+    return [match.group(0).lower() for match in _LEXICAL_TOKEN.finditer(value)]
 
 
 def cosine(a: list[float], b: list[float]) -> float:
@@ -106,30 +113,146 @@ class MemoryKnowledgeStore:
             )
         return hits
 
+    async def lexical_search(
+        self,
+        workspace_id: str,
+        query: str,
+        limit: int,
+        access: AccessContext,
+    ) -> list[SearchHit]:
+        query_terms = _lexical_terms(query)
+        if not query_terms:
+            return []
+
+        accessible: list[tuple[Chunk, Document, list[str]]] = []
+        for chunk in self.chunks.values():
+            if chunk.workspace_id != workspace_id:
+                continue
+            document = self.documents.get(chunk.document_id)
+            if not document or document.deleted_at is not None:
+                continue
+            if not access_allows(document.access, access) or not access_allows(
+                chunk.access, access
+            ):
+                continue
+            terms = _lexical_terms(chunk.text)
+            accessible.append((chunk, document, terms))
+
+        if not accessible:
+            return []
+
+        document_frequency = {
+            term: sum(1 for _, _, terms in accessible if term in set(terms))
+            for term in query_terms
+        }
+        average_length = sum(len(terms) for _, _, terms in accessible) / len(accessible)
+        k1 = 1.2
+        b = 0.75
+        scored: list[tuple[float, Chunk, Document]] = []
+        for chunk, document, terms in accessible:
+            if not terms:
+                continue
+            score = 0.0
+            for term in query_terms:
+                frequency = terms.count(term)
+                if frequency == 0:
+                    continue
+                df = document_frequency[term]
+                idf = math.log(1.0 + (len(accessible) - df + 0.5) / (df + 0.5))
+                denominator = frequency + k1 * (
+                    1.0 - b + b * len(terms) / max(1.0, average_length)
+                )
+                score += idf * (frequency * (k1 + 1.0)) / denominator
+            if score > 0:
+                scored.append((score, chunk, document))
+
+        scored.sort(key=lambda item: (-item[0], item[1].id))
+        return [
+            SearchHit(
+                document_id=document.id,
+                chunk_id=chunk.id,
+                title=document.title,
+                text=chunk.text,
+                score=score,
+                source=document.source,
+                metadata=document.metadata | chunk.metadata,
+            )
+            for score, chunk, document in scored[:limit]
+        ]
+
     async def graph_context(
         self,
         workspace_id: str,
         query: str,
         access: AccessContext,
+        depth: int = 1,
     ) -> tuple[list[Entity], list[Relationship]]:
+        if depth < 0 or depth > 3:
+            raise ValueError("graph_depth_out_of_range")
         tokens = {token.lower() for token in query.split() if len(token) > 2}
-        entities = [
+        if not tokens or depth == 0:
+            return [], []
+
+        allowed_entities = [
             entity
             for entity in self.entities
             if entity.workspace_id == workspace_id
             and self._document_allows(entity.document_id, workspace_id, access)
             and access_allows(entity.access, access)
-            and any(token in entity.name.lower() for token in tokens)
-        ][:20]
-        names = {entity.name for entity in entities}
-        relationships = [
-            rel
-            for rel in self.relationships
-            if rel.workspace_id == workspace_id
-            and self._document_allows(rel.document_id, workspace_id, access)
-            and access_allows(rel.access, access)
-            and (rel.subject in names or rel.object in names)
-        ][:50]
+        ]
+        by_name: dict[str, list[Entity]] = {}
+        for entity in allowed_entities:
+            by_name.setdefault(entity.name, []).append(entity)
+
+        seed_entities = sorted(
+            (
+                entity
+                for entity in allowed_entities
+                if any(token in entity.name.lower() for token in tokens)
+            ),
+            key=lambda item: (item.name, item.id),
+        )[:20]
+        selected: dict[str, Entity] = {
+            entity.id: entity for entity in seed_entities
+        }
+        frontier = {entity.name for entity in seed_entities}
+        relationship_by_id: dict[str, Relationship] = {}
+
+        for _ in range(depth):
+            if not frontier or len(relationship_by_id) >= 50:
+                break
+            next_names: set[str] = set()
+            for relationship in self.relationships:
+                if relationship.id in relationship_by_id:
+                    continue
+                if relationship.workspace_id != workspace_id:
+                    continue
+                if not self._document_allows(
+                    relationship.document_id, workspace_id, access
+                ) or not access_allows(relationship.access, access):
+                    continue
+                if relationship.subject not in frontier and relationship.object not in frontier:
+                    continue
+                relationship_by_id[relationship.id] = relationship
+                if relationship.subject in by_name:
+                    next_names.add(relationship.subject)
+                if relationship.object in by_name:
+                    next_names.add(relationship.object)
+                if len(relationship_by_id) >= 50:
+                    break
+
+            for name in sorted(next_names):
+                for entity in by_name.get(name, []):
+                    if len(selected) >= 20:
+                        break
+                    selected.setdefault(entity.id, entity)
+            frontier = next_names
+
+        entities = sorted(selected.values(), key=lambda item: (item.name, item.id))[:20]
+        relationships = sorted(
+            relationship_by_id.values(),
+            key=lambda item: (item.subject, item.predicate, item.object, item.id),
+        )[:50]
         return entities, relationships
 
     async def tombstone_document(

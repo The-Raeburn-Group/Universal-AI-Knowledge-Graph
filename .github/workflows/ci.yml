@@ -52,6 +52,9 @@ jobs:
       - name: Test
         run: make test
 
+      - name: Hybrid retrieval quality gate
+        run: make retrieval-bench
+
       - name: Build package
         run: make build
 

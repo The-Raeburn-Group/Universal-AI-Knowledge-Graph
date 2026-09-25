@@ -14,6 +14,7 @@ from sqlalchemy import (
     Table,
     Text,
     delete,
+    func,
     or_,
     select,
     text,
@@ -36,7 +37,7 @@ from universal_kg.domain import (
 )
 
 DATABASE_EMBEDDING_DIMENSIONS = 384
-EXPECTED_ALEMBIC_REVISION = "20260909_0003"
+EXPECTED_ALEMBIC_REVISION = "20260925_0004"
 
 
 def _policy_json(policy: AccessPolicy) -> dict[str, Any]:
@@ -364,18 +365,67 @@ class PostgresKnowledgeStore:
             )
         return hits
 
+    async def lexical_search(
+        self,
+        workspace_id: str,
+        query: str,
+        limit: int,
+        access: AccessContext,
+    ) -> list[SearchHit]:
+        normalized = query.strip()
+        if not normalized:
+            return []
+
+        config = text("'simple'::regconfig")
+        document_vector = func.to_tsvector(config, ChunkRecord.text)
+        tsquery = func.websearch_to_tsquery(config, normalized)
+        rank = func.ts_rank_cd(document_vector, tsquery)
+        statement = (
+            select(DocumentRecord, ChunkRecord, rank.label("rank"))
+            .join(DocumentRecord, DocumentRecord.id == ChunkRecord.document_id)
+            .where(
+                ChunkRecord.workspace_id == workspace_id,
+                DocumentRecord.workspace_id == workspace_id,
+                DocumentRecord.deleted_at.is_(None),
+                _access_filter(DocumentRecord.access_json, access),
+                _access_filter(ChunkRecord.access_json, access),
+                document_vector.op("@@")(tsquery),
+            )
+            .order_by(rank.desc(), ChunkRecord.id.asc())
+            .limit(limit)
+        )
+
+        async with self._sessions() as session:
+            rows = (await session.execute(statement)).all()
+
+        return [
+            SearchHit(
+                document_id=document.id,
+                chunk_id=chunk.id,
+                title=document.title,
+                text=chunk.text,
+                score=float(rank_value),
+                source=document.source,
+                metadata=document.metadata_json | chunk.metadata_json,
+            )
+            for document, chunk, rank_value in rows
+        ]
+
     async def graph_context(
         self,
         workspace_id: str,
         query: str,
         access: AccessContext,
+        depth: int = 1,
     ) -> tuple[list[Entity], list[Relationship]]:
+        if depth < 0 or depth > 3:
+            raise ValueError("graph_depth_out_of_range")
         tokens = sorted({token.lower() for token in query.split() if len(token) > 2})
-        if not tokens:
+        if not tokens or depth == 0:
             return [], []
 
         entity_conditions = [EntityRecord.name.ilike(f"%{token}%") for token in tokens]
-        entity_statement = (
+        seed_statement = (
             select(EntityRecord)
             .join(DocumentRecord, DocumentRecord.id == EntityRecord.document_id)
             .where(
@@ -386,14 +436,22 @@ class PostgresKnowledgeStore:
                 _access_filter(EntityRecord.access_json, access),
                 or_(*entity_conditions),
             )
+            .order_by(EntityRecord.name.asc(), EntityRecord.id.asc())
             .limit(20)
         )
 
+        entity_rows: dict[str, EntityRecord] = {}
+        relationship_rows: dict[str, RelationshipRecord] = {}
         async with self._sessions() as session:
-            entity_rows = (await session.scalars(entity_statement)).all()
-            names = [row.name for row in entity_rows]
-            relationship_rows: list[RelationshipRecord] = []
-            if names:
+            seeds = list((await session.scalars(seed_statement)).all())
+            for row in seeds:
+                entity_rows[row.id] = row
+            frontier = {row.name for row in seeds}
+
+            for _ in range(depth):
+                if not frontier or len(relationship_rows) >= 50:
+                    break
+                remaining = 50 - len(relationship_rows)
                 relationship_statement = (
                     select(RelationshipRecord)
                     .join(DocumentRecord, DocumentRecord.id == RelationshipRecord.document_id)
@@ -404,13 +462,64 @@ class PostgresKnowledgeStore:
                         _access_filter(DocumentRecord.access_json, access),
                         _access_filter(RelationshipRecord.access_json, access),
                         or_(
-                            RelationshipRecord.subject.in_(names),
-                            RelationshipRecord.object_name.in_(names),
+                            RelationshipRecord.subject.in_(sorted(frontier)),
+                            RelationshipRecord.object_name.in_(sorted(frontier)),
                         ),
                     )
-                    .limit(50)
                 )
-                relationship_rows = list((await session.scalars(relationship_statement)).all())
+                if relationship_rows:
+                    relationship_statement = relationship_statement.where(
+                        ~RelationshipRecord.id.in_(sorted(relationship_rows))
+                    )
+                relationship_statement = (
+                    relationship_statement.order_by(
+                        RelationshipRecord.subject.asc(),
+                        RelationshipRecord.predicate.asc(),
+                        RelationshipRecord.object_name.asc(),
+                        RelationshipRecord.id.asc(),
+                    ).limit(remaining)
+                )
+                discovered_relationships = list(
+                    (await session.scalars(relationship_statement)).all()
+                )
+                if not discovered_relationships:
+                    break
+
+                connected_names: set[str] = set()
+                for relationship in discovered_relationships:
+                    relationship_rows.setdefault(relationship.id, relationship)
+                    connected_names.add(relationship.subject)
+                    connected_names.add(relationship.object_name)
+
+                known_names = {row.name for row in entity_rows.values()}
+                new_names = connected_names - known_names
+                if not new_names:
+                    frontier = set()
+                    continue
+
+                remaining_entities = 20 - len(entity_rows)
+                if remaining_entities <= 0:
+                    break
+                entity_statement = (
+                    select(EntityRecord)
+                    .join(DocumentRecord, DocumentRecord.id == EntityRecord.document_id)
+                    .where(
+                        EntityRecord.workspace_id == workspace_id,
+                        DocumentRecord.workspace_id == workspace_id,
+                        DocumentRecord.deleted_at.is_(None),
+                        _access_filter(DocumentRecord.access_json, access),
+                        _access_filter(EntityRecord.access_json, access),
+                        EntityRecord.name.in_(sorted(new_names)),
+                    )
+                    .order_by(EntityRecord.name.asc(), EntityRecord.id.asc())
+                    .limit(remaining_entities)
+                )
+                discovered_entities = list(
+                    (await session.scalars(entity_statement)).all()
+                )
+                for row in discovered_entities:
+                    entity_rows.setdefault(row.id, row)
+                frontier = {row.name for row in discovered_entities}
 
         entities = [
             Entity(
@@ -422,7 +531,7 @@ class PostgresKnowledgeStore:
                 metadata=row.metadata_json,
                 access=AccessPolicy.model_validate(row.access_json),
             )
-            for row in entity_rows
+            for row in entity_rows.values()
         ]
         relationships = [
             Relationship(
@@ -437,9 +546,9 @@ class PostgresKnowledgeStore:
                 metadata=row.metadata_json,
                 access=AccessPolicy.model_validate(row.access_json),
             )
-            for row in relationship_rows
+            for row in relationship_rows.values()
         ]
-        return entities, relationships
+        return entities[:20], relationships[:50]
 
     async def tombstone_document(
         self,
