@@ -74,6 +74,38 @@ def _document_version(
     return f"chunk-sha256:{chunk_hash}"
 
 
+def _canonical_bundle_payload(
+    *,
+    workspace_id: str,
+    query: str,
+    retrieved_at: datetime,
+    sources: list[EvidenceExportSource],
+) -> dict[str, object]:
+    return {
+        "contract_version": EVIDENCE_EXPORT_VERSION,
+        "workspace_id": workspace_id,
+        "query": query,
+        "retrieved_at": retrieved_at.isoformat(),
+        "sources": [
+            {
+                "id": source.id,
+                "uri": source.uri,
+                "title": source.title,
+                "source_type": source.source_type,
+                "retrieved_at": source.retrieved_at.isoformat(),
+                "workspace_id": source.workspace_id,
+                "document_id": source.document_id,
+                "document_version": source.document_version,
+                "chunk_id": source.chunk_id,
+                "excerpt": source.excerpt,
+                "content_hash": source.content_hash,
+                "source_acl_ref": source.source_acl_ref,
+            }
+            for source in sources
+        ],
+    }
+
+
 def _bundle_digest_payload(
     *,
     workspace_id: str,
@@ -81,20 +113,28 @@ def _bundle_digest_payload(
     retrieved_at: datetime,
     sources: list[EvidenceExportSource],
 ) -> str:
-    payload = {
-        "contract_version": EVIDENCE_EXPORT_VERSION,
-        "workspace_id": workspace_id,
-        "query": query,
-        "retrieved_at": retrieved_at.isoformat(),
-        "sources": [source.model_dump(mode="json") for source in sources],
-    }
     canonical = json.dumps(
-        payload,
+        _canonical_bundle_payload(
+            workspace_id=workspace_id,
+            query=query,
+            retrieved_at=retrieved_at,
+            sources=sources,
+        ),
         sort_keys=True,
         separators=(",", ":"),
         ensure_ascii=False,
     )
     return sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def verify_evidence_export_bundle(bundle: EvidenceExportBundle) -> bool:
+    expected = _bundle_digest_payload(
+        workspace_id=bundle.workspace_id,
+        query=bundle.query,
+        retrieved_at=bundle.retrieved_at,
+        sources=bundle.sources,
+    )
+    return expected == bundle.bundle_sha256
 
 
 def build_evidence_export(
