@@ -196,6 +196,42 @@ class SearchRequest(StrictModel):
     query: str = Field(min_length=1, max_length=8_000)
     limit: int = Field(default=10, ge=1, le=50)
     include_graph: bool = True
+    retrieval_mode: Literal["vector", "lexical", "hybrid"] = "hybrid"
+    candidate_multiplier: int = Field(default=4, ge=1, le=10)
+    rerank: bool = True
+    graph_depth: int = Field(default=1, ge=0, le=3)
+
+
+class RetrievalRanking(BaseModel):
+    vector_score: float | None = None
+    lexical_score: float | None = None
+    fusion_score: float = 0.0
+    rerank_score: float = 0.0
+    final_score: float = 0.0
+
+
+class DuplicateCandidate(BaseModel):
+    content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    document_ids: list[str] = Field(min_length=2)
+    chunk_ids: list[str] = Field(min_length=2)
+
+
+class ConflictCandidate(BaseModel):
+    subject: str
+    predicate: str
+    objects: list[str] = Field(min_length=2)
+    relationship_ids: list[str] = Field(min_length=2)
+    resolution: Literal["review_required"] = "review_required"
+
+
+class RetrievalDiagnostics(BaseModel):
+    retrieval_mode: Literal["vector", "lexical", "hybrid"]
+    vector_candidates: int = 0
+    lexical_candidates: int = 0
+    fused_candidates: int = 0
+    graph_depth: int = 0
+    duplicates: list[DuplicateCandidate] = Field(default_factory=list)
+    conflicts: list[ConflictCandidate] = Field(default_factory=list)
 
 
 class SearchHit(BaseModel):
@@ -209,6 +245,7 @@ class SearchHit(BaseModel):
     provenance: RetrievalProvenance | None = None
     citation: CitationProvenance | None = None
     security: ContentSecurity | None = None
+    ranking: RetrievalRanking | None = None
 
 
 class SearchResponse(BaseModel):
@@ -217,6 +254,7 @@ class SearchResponse(BaseModel):
     related_entities: list[Entity] = Field(default_factory=list)
     relationships: list[Relationship] = Field(default_factory=list)
     security: ContentSecurity | None = None
+    diagnostics: RetrievalDiagnostics | None = None
 
 
 class TombstoneDocumentRequest(StrictModel):
