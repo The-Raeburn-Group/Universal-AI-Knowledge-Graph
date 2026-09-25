@@ -98,7 +98,10 @@ def _contains_token_sequence(haystack: list[str], needle: list[str]) -> bool:
     if not needle or len(needle) > len(haystack):
         return False
     width = len(needle)
-    return any(haystack[index : index + width] == needle for index in range(len(haystack) - width + 1))
+    return any(
+        haystack[index : index + width] == needle
+        for index in range(len(haystack) - width + 1)
+    )
 
 
 def _rerank_score(query: str, hit: SearchHit) -> float:
