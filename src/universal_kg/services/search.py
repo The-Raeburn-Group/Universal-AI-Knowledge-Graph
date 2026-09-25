@@ -111,7 +111,14 @@ def _rerank_score(query: str, hit: SearchHit) -> float:
 def _duplicate_candidates(hits: list[SearchHit]) -> list[DuplicateCandidate]:
     grouped: dict[str, list[SearchHit]] = defaultdict(list)
     for hit in hits:
-        digest = sha256(hit.text.encode("utf-8")).hexdigest()
+        metadata_digest = hit.metadata.get("content_sha256")
+        digest = (
+            metadata_digest
+            if isinstance(metadata_digest, str)
+            and len(metadata_digest) == 64
+            and all(character in "0123456789abcdef" for character in metadata_digest)
+            else sha256(hit.text.encode("utf-8")).hexdigest()
+        )
         grouped[digest].append(hit)
 
     duplicates: list[DuplicateCandidate] = []
