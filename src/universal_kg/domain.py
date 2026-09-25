@@ -216,6 +216,11 @@ class DuplicateCandidate(BaseModel):
     chunk_ids: list[str] = Field(min_length=2)
 
 
+class DocumentDuplicateCandidate(BaseModel):
+    content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    document_ids: list[str] = Field(min_length=2)
+
+
 class ConflictCandidate(BaseModel):
     subject: str
     predicate: str
@@ -231,6 +236,7 @@ class RetrievalDiagnostics(BaseModel):
     fused_candidates: int = 0
     graph_depth: int = 0
     duplicates: list[DuplicateCandidate] = Field(default_factory=list)
+    document_duplicates: list[DocumentDuplicateCandidate] = Field(default_factory=list)
     conflicts: list[ConflictCandidate] = Field(default_factory=list)
 
 
