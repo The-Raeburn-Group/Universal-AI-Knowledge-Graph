@@ -14,6 +14,14 @@ EVIDENCE_EXPORT_VERSION = "raeburnai.kg-evidence-export.v1"
 EvidenceSourceType = Literal["primary", "secondary", "internal", "unknown"]
 
 
+class EvidenceExportSecurity(BaseModel):
+    trust: Literal["untrusted"] = "untrusted"
+    instruction_authority: Literal["none"] = "none"
+    handling: Literal["data-only"] = "data-only"
+    injection_detected: bool = False
+    signals: list[str] = Field(default_factory=list)
+
+
 class EvidenceExportSource(BaseModel):
     id: str = Field(min_length=1, max_length=256)
     uri: str = Field(min_length=1, max_length=2048)
@@ -26,7 +34,10 @@ class EvidenceExportSource(BaseModel):
     chunk_id: str = Field(min_length=1, max_length=256)
     excerpt: str = Field(min_length=1, max_length=20_000)
     content_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    page_start: int | None = Field(default=None, ge=1)
+    page_end: int | None = Field(default=None, ge=1)
     source_acl_ref: str | None = Field(default=None, max_length=512)
+    security: EvidenceExportSecurity
 
 
 class EvidenceExportBundle(BaseModel):
@@ -104,7 +115,10 @@ def _canonical_bundle_payload(
                 "chunk_id": source.chunk_id,
                 "excerpt": source.excerpt,
                 "content_hash": source.content_hash,
+                "page_start": source.page_start,
+                "page_end": source.page_end,
                 "source_acl_ref": source.source_acl_ref,
+                "security": source.security.model_dump(mode="json"),
             }
             for source in sources
         ],
@@ -150,8 +164,9 @@ def build_evidence_export(
     exported: list[EvidenceExportSource] = []
     for hit in response.hits:
         citation = hit.citation
-        if citation is None:
-            continue
+        security = hit.security
+        if citation is None or security is None:
+            raise ValueError("search hit is missing citation or retrieval security metadata")
         exported.append(
             EvidenceExportSource(
                 id=hit.chunk_id,
@@ -174,9 +189,16 @@ def build_evidence_export(
                 chunk_id=hit.chunk_id,
                 excerpt=hit.text,
                 content_hash=citation.content_sha256,
-                # ACL identity is intentionally not inferred from caller-controlled
-                # metadata. A future trusted store-derived binding can populate this.
-                source_acl_ref=None,
+                page_start=citation.page_start,
+                page_end=citation.page_end,
+                source_acl_ref=hit.source_acl_ref,
+                security=EvidenceExportSecurity(
+                    trust=security.trust,
+                    instruction_authority=security.instruction_authority,
+                    handling=security.handling,
+                    injection_detected=security.injection_detected,
+                    signals=security.signals,
+                ),
             )
         )
 
